@@ -89,7 +89,11 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 
 // Tx starts and returns a new YDB interactive transaction.
 func (y *YDBDriver) Tx(ctx context.Context) (dialect.Tx, error) {
-	panic("not implemented")
+	return &YDBTx{
+		driver:     y,
+		ctx:        ctx,
+		operations: make([]txOperation, 0),
+	}, nil
 }
 
 // Close closes the underlying connection.
