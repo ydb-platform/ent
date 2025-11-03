@@ -13,7 +13,7 @@ import (
 	ydbQuery "github.com/ydb-platform/ydb-go-sdk/v3/query"
 )
 
-// YDBDriver is a dialect.Driver implementation for YDB database.
+// YDBDriver is a dialect.Driver implementation for YDB.
 type YDBDriver struct {
 	dialect.Driver
 
@@ -89,11 +89,7 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 
 // Tx starts and returns a new YDB interactive transaction.
 func (y *YDBDriver) Tx(ctx context.Context) (dialect.Tx, error) {
-	return &YDBTx{
-		driver:     y,
-		ctx:        ctx,
-		operations: make([]txOperation, 0),
-	}, nil
+	return newYDBTx(ctx, y)
 }
 
 // Close closes the underlying connection.
