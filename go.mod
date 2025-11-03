@@ -16,9 +16,11 @@ require (
 	github.com/olekukonko/tablewriter v1.0.8
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.10.0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.118.0
 	go.opencensus.io v0.24.0
 	golang.org/x/sync v0.17.0
 	golang.org/x/tools v0.37.0
+	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated
 )
 
 require (
@@ -39,7 +41,6 @@ require (
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
-	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/olekukonko/errors v0.0.0-20250405072817-4e6d85265da6 // indirect
 	github.com/olekukonko/ll v0.0.8 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -48,16 +49,15 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20250911135631-b3beddd517d9 // indirect
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.118.0 // indirect
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
 	golang.org/x/mod v0.28.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/tools/go/expect v0.1.0-deprecated // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 	google.golang.org/grpc v1.76.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
