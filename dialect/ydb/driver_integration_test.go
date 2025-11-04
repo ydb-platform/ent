@@ -18,50 +18,36 @@ const (
 )
 
 func TestOpenAndClose(t *testing.T) {
+	// Given
 	ctx := context.Background()
 
-	drv, err := Open(ctx, defaultDSN)
+	// When
+	driver, err := Open(ctx, defaultDSN)
+	// Then
 	require.NoError(t, err, "should open connection to YDB")
-	require.NotNil(t, drv)
+	require.NotNil(t, driver)
 
-	err = drv.Close()
+	// When
+	err = driver.Close()
+	// Then
 	require.NoError(t, err, "should close connection")
 }
 
-func TestExec_CreateTable(t *testing.T) {
+func TestExecCreateTable(t *testing.T) {
+	// Given
 	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
-	defer drv.Close()
-
-	// Drop table if exists
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
-
-	// Create table
-	createTableQuery := `
-		CREATE TABLE test_users (
-			id Int64 NOT NULL,
-			name Utf8,
-			age Int32,
-			PRIMARY KEY (id)
-		)
-	`
-	err = drv.Exec(ctx, createTableQuery, nil, nil)
-	require.NoError(t, err, "should create table")
 
 	// Cleanup
-	err = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
-	require.NoError(t, err, "should drop table")
-}
+	t.Cleanup(func() {
+		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+		require.NoError(t, err, "DROP TABLE should execute without err")
+		driver.Close()
+	})
 
-func TestExec_Insert(t *testing.T) {
-	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
-	require.NoError(t, err)
-	defer drv.Close()
-
-	// Setup: create table
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// When
+	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 	createTableQuery := `
 		CREATE TABLE test_users (
 			id Int64 NOT NULL,
@@ -70,29 +56,91 @@ func TestExec_Insert(t *testing.T) {
 			PRIMARY KEY (id)
 		)
 	`
-	err = drv.Exec(ctx, createTableQuery, nil, nil)
+	err = driver.Exec(ctx, createTableQuery, nil, nil)
+	require.NoError(t, err, "CREATE TABLE should execute without err")
+
+	// Then
+	var result query.Result
+	err = driver.Query(ctx, "SELECT 1 FROM test_users", nil, &result)
+	require.NoError(t, err, "created table should exist")
+}
+
+func TestExecInsert(t *testing.T) {
+	// Given
+	ctx := context.Background()
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
 
-	// Test: insert data
+	// Cleanup
+	t.Cleanup(func() {
+		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+		require.NoError(t, err, "DROP TABLE should execute without err")
+		driver.Close()
+	})
+
+	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+	createTableQuery := `
+		CREATE TABLE test_users (
+			id Int64 NOT NULL,
+			name Utf8,
+			age Int32,
+			PRIMARY KEY (id)
+		)
+	`
+	err = driver.Exec(ctx, createTableQuery, nil, nil)
+	require.NoError(t, err)
+
+	// When
 	insertQuery := `
 		INSERT INTO test_users (id, name, age)
 		VALUES (1, 'Alice', 30)
 	`
-	err = drv.Exec(ctx, insertQuery, nil, nil)
-	require.NoError(t, err, "should insert data")
+	err = driver.Exec(ctx, insertQuery, nil, nil)
+	require.NoError(t, err, "INSERT data execute without err")
 
-	// Cleanup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Then
+	var result query.Result
+	t.Cleanup(func() { result.Close(ctx) })
+
+	err = driver.Query(ctx, "SELECT COUNT(*) AS `count` FROM test_users", nil, &result)
+	require.NoError(t, err, "SELECT data after INSERT should execute without err")
+	require.NotNil(t, result, "Result of SELECT should not be nil")
+
+	for {
+		rs, err := result.NextResultSet(ctx)
+		require.NoError(t, err, "Result should contain at least 1 result set")
+
+		for {
+			row, err := rs.NextRow(ctx)
+			require.NoError(t, err, "Result set should contain at least 1 row")
+
+			var resStruct struct {
+				Count uint64 `sql:"count"`
+			}
+			err = row.ScanStruct(&resStruct)
+			require.NoError(t, err, "Row scanning should execute without err")
+
+			require.Equal(t, uint64(1), resStruct.Count, "Table should contain exactly 1 row")
+			break
+		}
+		break
+	}
 }
 
-func TestExec_Update(t *testing.T) {
+func TestExecUpdate(t *testing.T) {
+	// Given
 	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
-	defer drv.Close()
 
-	// Setup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Cleanup
+	t.Cleanup(func() {
+		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+		require.NoError(t, err, "DROP TABLE should execute without err")
+		driver.Close()
+	})
+
+	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 	createTableQuery := `
 		CREATE TABLE test_users (
 			id Int64 NOT NULL,
@@ -101,30 +149,65 @@ func TestExec_Update(t *testing.T) {
 			PRIMARY KEY (id)
 		)
 	`
-	require.NoError(t, drv.Exec(ctx, createTableQuery, nil, nil))
-	require.NoError(t, drv.Exec(ctx, "INSERT INTO test_users (id, name, age) VALUES (1, 'Alice', 30)", nil, nil))
+	require.NoError(t, driver.Exec(ctx, createTableQuery, nil, nil))
 
-	// Test: update data
+	insertDataQuery := "INSERT INTO test_users (id, name, age) VALUES (1, 'Alice', 30)"
+	require.NoError(t, driver.Exec(ctx, insertDataQuery, nil, nil))
+
+	// When
 	updateQuery := `
 		UPDATE test_users
 		SET age = 31
 		WHERE id = 1
 	`
-	err = drv.Exec(ctx, updateQuery, nil, nil)
+	err = driver.Exec(ctx, updateQuery, nil, nil)
 	require.NoError(t, err, "should update data")
 
-	// Cleanup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Then
+	var result query.Result
+	t.Cleanup(func() { result.Close(ctx) })
+
+	err = driver.Query(ctx, "SELECT * FROM test_users", nil, &result)
+	require.NoError(t, err, "SELECT data after UPDATE should succeed")
+	require.NotNil(t, result, "Result of SELECt should not be nil")
+
+	for {
+		rs, err := result.NextResultSet(ctx)
+		require.NoError(t, err, "Result should contain at least 1 result set")
+
+		for {
+			row, err := rs.NextRow(ctx)
+			require.NoError(t, err, "Result set should contain at least 1 row")
+
+			var resStruct struct {
+				Id   int64  `sql:"id"`
+				Name string `sql:"name"`
+				Age  int64  `sql:"age"`
+			}
+			err = row.ScanStruct(&resStruct)
+			require.NoError(t, err, "Row scanning should succeed")
+
+			require.Equal(t, int64(31), resStruct.Age, "Age should've been changed")
+			break
+		}
+		break
+	}
 }
 
-func TestExec_Delete(t *testing.T) {
+func TestExecDelete(t *testing.T) {
+	// Given
 	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
-	defer drv.Close()
 
-	// Setup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Cleanup
+	t.Cleanup(func() {
+		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+		require.NoError(t, err, "DROP TABLE should succeed")
+		driver.Close()
+	})
+
+	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 	createTableQuery := `
 		CREATE TABLE test_users (
 			id Int64 NOT NULL,
@@ -133,29 +216,62 @@ func TestExec_Delete(t *testing.T) {
 			PRIMARY KEY (id)
 		)
 	`
-	require.NoError(t, drv.Exec(ctx, createTableQuery, nil, nil))
-	require.NoError(t, drv.Exec(ctx, "INSERT INTO test_users (id, name, age) VALUES (1, 'Alice', 30)", nil, nil))
+	require.NoError(t, driver.Exec(ctx, createTableQuery, nil, nil))
 
-	// Test: delete data
+	insertDataQuery := "INSERT INTO test_users (id, name, age) VALUES (1, 'Alice', 30)"
+	require.NoError(t, driver.Exec(ctx, insertDataQuery, nil, nil))
+
+	// When
 	deleteQuery := `
 		DELETE FROM test_users
 		WHERE id = 1
 	`
-	err = drv.Exec(ctx, deleteQuery, nil, nil)
-	require.NoError(t, err, "should delete data")
+	err = driver.Exec(ctx, deleteQuery, nil, nil)
+	require.NoError(t, err, "DELETE request should execute without err")
 
-	// Cleanup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Then
+	var result query.Result
+	t.Cleanup(func() { result.Close(ctx) })
+
+	err = driver.Query(ctx, "SELECT COUNT(*) AS `count` FROM test_users", nil, &result)
+	require.NoError(t, err, "SELECT data after DELETE should execute without err")
+	require.NotNil(t, result, "Result of SELECT should not be nil")
+
+	for {
+		rs, err := result.NextResultSet(ctx)
+		require.NoError(t, err, "Result should contain at least 1 result set")
+
+		for {
+			row, err := rs.NextRow(ctx)
+			require.NoError(t, err, "Result set should contain at least 1 row")
+
+			var resStruct struct {
+				Count uint64 `sql:"count"`
+			}
+			err = row.ScanStruct(&resStruct)
+			require.NoError(t, err, "Row scanning should execute without err")
+
+			require.Equal(t, uint64(0), resStruct.Count, "Table should contain exactly 1 row")
+			break
+		}
+		break
+	}
 }
 
-func TestQuery_SelectData(t *testing.T) {
+func TestQueryEmptyTable(t *testing.T) {
+	// Given
 	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
-	defer drv.Close()
 
-	// Setup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Cleanup
+	t.Cleanup(func() {
+		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+		require.NoError(t, err, "DROP TABLE should execute without err")
+		driver.Close()
+	})
+
+	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 	createTableQuery := `
 		CREATE TABLE test_users (
 			id Int64 NOT NULL,
@@ -164,32 +280,48 @@ func TestQuery_SelectData(t *testing.T) {
 			PRIMARY KEY (id)
 		)
 	`
-	require.NoError(t, drv.Exec(ctx, createTableQuery, nil, nil))
-	require.NoError(t, drv.Exec(ctx, "INSERT INTO test_users (id, name, age) VALUES (1, 'Alice', 30)", nil, nil))
-	require.NoError(t, drv.Exec(ctx, "INSERT INTO test_users (id, name, age) VALUES (2, 'Bob', 25)", nil, nil))
+	require.NoError(t, driver.Exec(ctx, createTableQuery, nil, nil))
 
-	// Test: query data
-	selectQuery := "SELECT id, name, age FROM test_users ORDER BY id"
+	// When
+	selectQuery := "SELECT * FROM test_users"
+
 	var result query.Result
-	err = drv.Query(ctx, selectQuery, nil, &result)
-	require.NoError(t, err, "should query data")
-	require.NotNil(t, result, "result should not be nil")
+	t.Cleanup(func() { result.Close(ctx) })
 
-	// Verify we got results (basic check - detailed row reading would require more YDB SDK usage)
-	require.NotNil(t, result)
+	err = driver.Query(ctx, selectQuery, nil, &result)
 
-	// Cleanup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Then
+	require.NoError(t, err, "SELECT data should execute without err")
+	require.NotNil(t, result, "Result of SELECT should not be nil")
+
+	for {
+		rs, err := result.NextResultSet(ctx)
+		require.NoError(t, err, "Result should contain at least 1 result set")
+
+		counter := 0
+		for _, err := range rs.Rows(ctx) {
+			require.NoError(t, err, "Rows are supposed to be empty, so no error should happen")
+			counter++
+		}
+		require.Equal(t, 0, counter, "Table should be empty")
+		break
+	}
 }
 
-func TestQuery_EmptyTable(t *testing.T) {
+func TestExecMultipleInserts(t *testing.T) {
+	// Given
 	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
-	defer drv.Close()
 
-	// Setup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	// Cleanup
+	t.Cleanup(func() {
+		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
+		require.NoError(t, err, "DROP TABLE should execute without err")
+		driver.Close()
+	})
+
+	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 	createTableQuery := `
 		CREATE TABLE test_users (
 			id Int64 NOT NULL,
@@ -198,87 +330,80 @@ func TestQuery_EmptyTable(t *testing.T) {
 			PRIMARY KEY (id)
 		)
 	`
-	require.NoError(t, drv.Exec(ctx, createTableQuery, nil, nil))
+	require.NoError(t, driver.Exec(ctx, createTableQuery, nil, nil))
 
-	// Test: query empty table
-	selectQuery := "SELECT id, name, age FROM test_users"
-	var result query.Result
-	err = drv.Query(ctx, selectQuery, nil, &result)
-	require.NoError(t, err, "should query empty table")
-	require.NotNil(t, result)
-
-	// Cleanup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
-}
-
-func TestQuery_InvalidQuery(t *testing.T) {
-	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
-	require.NoError(t, err)
-	defer drv.Close()
-
-	// Test: invalid query
-	invalidQuery := "SELECT * FROM non_existent_table"
-	var result query.Result
-	err = drv.Query(ctx, invalidQuery, nil, &result)
-	require.Error(t, err, "should return error for invalid query")
-}
-
-func TestExec_InvalidQuery(t *testing.T) {
-	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
-	require.NoError(t, err)
-	defer drv.Close()
-
-	// Test: invalid exec query
-	invalidQuery := "INSERT INTO non_existent_table (id) VALUES (1)"
-	err = drv.Exec(ctx, invalidQuery, nil, nil)
-	require.Error(t, err, "should return error for invalid query")
-}
-
-func TestExec_MultipleInserts(t *testing.T) {
-	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
-	require.NoError(t, err)
-	defer drv.Close()
-
-	// Setup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
-	createTableQuery := `
-		CREATE TABLE test_users (
-			id Int64 NOT NULL,
-			name Utf8,
-			age Int32,
-			PRIMARY KEY (id)
-		)
-	`
-	require.NoError(t, drv.Exec(ctx, createTableQuery, nil, nil))
-
-	// Test: insert multiple rows
-	for i := 1; i <= 10; i++ {
+	// When
+	for i := 0; i < 10; i++ {
 		insertQuery := fmt.Sprintf("INSERT INTO test_users (id, name, age) VALUES (%d, 'User%d', 20)", i, i)
-		err = drv.Exec(ctx, insertQuery, nil, nil)
+		err = driver.Exec(ctx, insertQuery, nil, nil)
 		require.NoError(t, err)
 	}
 
-	// Verify with query
+	// Then
 	var result query.Result
-	err = drv.Query(ctx, "SELECT COUNT(*) as cnt FROM test_users", nil, &result)
+	t.Cleanup(func() { result.Close(ctx) })
+
+	err = driver.Query(ctx, "SELECT COUNT(*) AS `count` FROM test_users", nil, &result)
+	require.NoError(t, err)
+	require.NotNil(t, result, "Result of SELECT should not be nil")
+
+	for {
+		rs, err := result.NextResultSet(ctx)
+		require.NoError(t, err, "Result should contain at least 1 result set")
+
+		for {
+			row, err := rs.NextRow(ctx)
+			require.NoError(t, err, "Result set should contain at least 1 row")
+
+			var resStruct struct {
+				Count uint64 `sql:"count"`
+			}
+			err = row.ScanStruct(&resStruct)
+			require.NoError(t, err, "Row scanning should execute without err")
+
+			require.Equal(t, uint64(10), resStruct.Count, "Table should contain exactly 1 row")
+			break
+		}
+		break
+	}
+}
+
+func TestQueryInvalidQuery(t *testing.T) {
+	// Given
+	ctx := context.Background()
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
 
 	// Cleanup
-	_ = drv.Exec(ctx, "DROP TABLE test_users", nil, nil)
+	t.Cleanup(func() {
+		driver.Close()
+	})
+
+	// When
+	invalidQuery := "SELECT * FROM non_existent_table"
+	var result query.Result
+	err = driver.Query(ctx, invalidQuery, nil, &result)
+
+	// Then
+	require.Error(t, err, "should return error for invalid query")
 }
 
 func TestContextCancellation(t *testing.T) {
+	// Given
 	ctx := context.Background()
-	drv, err := Open(ctx, defaultDSN)
+	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err)
-	defer drv.Close()
 
+	// Cleanup
+	t.Cleanup(func() {
+		driver.Close()
+	})
+
+	// When
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
 
-	err = drv.Exec(cancelCtx, "SELECT 1", nil, nil)
+	// Then
+	err = driver.Exec(cancelCtx, "SELECT 1", nil, nil)
 	require.Error(t, err, "should return error when context is cancelled")
 }

@@ -32,7 +32,10 @@ func Open(ctx context.Context, dsn string) (*YDBDriver, error) {
 }
 
 // Exec implements the dialect.Exec method.
-// v any is never used since YDB's Executor.Exec never returns value
+//
+// [v any] is never used since YDB's Executor.Exec never returns value
+//
+// [args any] is never used. Use WithDoOptions() or WithExecOptions() for passing parameters
 func (y *YDBDriver) Exec(ctx context.Context, query string, args any, v any) error {
 	doOpts := getDoOptions(ctx)
 	execOpts := getExecOptions(ctx)
@@ -51,7 +54,10 @@ func (y *YDBDriver) Exec(ctx context.Context, query string, args any, v any) err
 }
 
 // Query implements the dialect.Query method.
-// Type of v any must be *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
+//
+// Type of [v any] must be *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
+//
+// [args any] is never used. Use WithDoOptions() or WithExecOptions() for passing parameters
 func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) error {
 	ydbResult, ok := v.(*ydbQuery.Result)
 	if !ok {
@@ -76,9 +82,9 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 				return err
 			}
 
-			defer func() {
-				_ = result.Close(ctx)
-			}()
+			// defer func() {
+			// 	_ = result.Close(ctx)
+			// }()
 
 			*ydbResult = result
 			return nil
