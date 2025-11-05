@@ -31,7 +31,7 @@ func setupDriver(t *testing.T, ctx context.Context) *YDBDriver {
 	t.Helper()
 	
 	driver, err := Open(ctx, defaultDSN)
-	require.NoError(t, err, "should open connection to YDB")
+	require.NoError(t, err, "Should open connection to YDB")
 	
 	t.Cleanup(func() {
 		driver.Close()
