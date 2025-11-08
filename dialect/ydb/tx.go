@@ -6,317 +6,133 @@ package ydb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-	"sync"
 
 	"entgo.io/ent/dialect"
-	ydbQuery "github.com/ydb-platform/ydb-go-sdk/v3/query"
+	"github.com/ydb-platform/ydb-go-sdk/v3/retry"
 )
 
-// YDBTx implements dialect.Tx for YDB driver and represents YBD's interactive transaction.
+// YDBTx implements [dialect.Tx] for YDB driver and represents YBD's interactive transaction.
 type YDBTx struct {
 	dialect.Tx
 
 	driver *YDBDriver
-
-	// Channels for coordinating with DoTx goroutine
-	operationsChan       chan *txOperation             // operations queue
-	resultsChan          chan *txResult                // synchronous results
-	commitOrRollbackChan chan *commitOrRollbackRequest // commit/rollback signal
-	readySignal          chan struct{}                 // Signals DoTx is ready to receive operations
-	closedSignal         chan struct{}                 // Signals DoTx has finished
-
-	// Transaction state
-	mutex          sync.Mutex
-	isAboutToClose bool
-	startErr       error
-
-	doTxOpts []ydbQuery.DoTxOption
-}
-
-// txOperation represents a single Exec or Query operation.
-type txOperation struct {
-	query       string
-	args        any
-	operationFn func(ydbQuery.TxActor) error
-}
-
-// txResult is the result of executing an operation.
-type txResult struct {
-	err error
-}
-
-// commitOrRollbackRequest signals DoTx goroutine to commit or rollback.
-type commitOrRollbackRequest struct {
-	shouldCommit bool
-	errChan      chan error
+	sqlTx  *sql.Tx
 }
 
 func newYDBTx(
 	ctx context.Context,
 	driver *YDBDriver,
-	yqlOpts YqlOptions,
 ) (*YDBTx, error) {
-	tx := &YDBTx{
-		driver:               driver,
-		operationsChan:       make(chan *txOperation, 16),
-		resultsChan:          make(chan *txResult),
-		commitOrRollbackChan: make(chan *commitOrRollbackRequest),
-		readySignal:          make(chan struct{}),
-		closedSignal:         make(chan struct{}),
-		doTxOpts:             yqlOpts.doTxOptions,
+	tx, err := driver.dbSqlDriver.BeginTx(
+		ctx,
+		&sql.TxOptions{ // ????
+			Isolation: sql.LevelSerializable,
+		},
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	tx.start(ctx)
-
-	select {
-	case <-tx.readySignal:
-		return tx, nil
-	case <-tx.closedSignal:
-		return nil, txFailedToStartErr(tx.startErr)
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return &YDBTx{
+		driver: driver,
+		sqlTx:  tx,
+	}, nil
 }
 
 // Exec implements dialect.Exec method
 //
-// [v any] is never used since YDB's Executor.Exec never returns value
-// [args any] must be an instance of dialect/ydb.YqlOptions
+// args [any] must be an instance of [YqlOptions]
+// v [any] must be [*sql.Result] or nil
 func (tx *YDBTx) Exec(ctx context.Context, query string, args any, v any) error {
-	if err := tx.checkTxState(); err != nil {
-		return err
-	}
-
 	yqlOpts, ok := args.(YqlOptions)
-	if !ok {
+	if !ok && args != nil {
 		return fmt.Errorf(
-			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			"dialect/ydb: invalid type %T  of 'args'. Expect dialect/ydb.YqlOptions",
 			args,
 		)
 	}
 
-	select {
-	case tx.operationsChan <- &txOperation{
-		query: query,
-		args:  args,
-		operationFn: func(actor ydbQuery.TxActor) error {
-			return actor.Exec(
-				ctx,
-				query,
-				yqlOpts.execOptions...,
-			)
-		},
-	}:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-tx.closedSignal:
-		return txClosedUnexpectedlyErr()
-	}
-
-	select {
-	case result := <-tx.resultsChan:
-		return result.err
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-tx.closedSignal:
-		return txClosedUnexpectedlyErr()
-	}
-}
-
-// Query implements the dialect.Query method.
-//
-// Type of [v any] must an instance of *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
-// [args any] must be an instance of dialect/ydb.YqlOptions
-func (tx *YDBTx) Query(ctx context.Context, query string, args any, v any) error {
-	if err := tx.checkTxState(); err != nil {
-		return err
-	}
-
-	ydbResult, ok := v.(*ydbQuery.Result)
-	if !ok {
+	resPtr, ok := v.(*sql.Result)
+	if !ok && v != nil {
 		return fmt.Errorf(
-			"dialect/ydb: invalid type %T. expect *github.com/ydb-platform/ydb-go-sdk/v3/query.Result",
+			"dialect/ydb: invalid type %T of 'v'.  expect *database/sql.Result",
 			v,
 		)
 	}
 
-	yqlOpts, ok := args.(YqlOptions)
-	if !ok {
-		return fmt.Errorf(
-			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
-			args,
-		)
-	}
-
-	select {
-	case tx.operationsChan <- &txOperation{
-		query: query,
-		args:  args,
-		operationFn: func(executor ydbQuery.TxActor) error {
-			result, err := executor.Query(
+	return retry.Retry(
+		ctx,
+		func(ctx context.Context) (err error) {
+			res, err := tx.sqlTx.ExecContext(
 				ctx,
 				query,
-				yqlOpts.execOptions...,
+				yqlOpts.sqlArgs...,
 			)
 			if err != nil {
 				return err
 			}
 
-			*ydbResult = result
+			if resPtr != nil {
+				*resPtr = res
+			}
 			return nil
 		},
-	}:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-tx.closedSignal:
-		return txClosedUnexpectedlyErr()
-	}
-
-	select {
-	case result := <-tx.resultsChan:
-		return result.err
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-tx.closedSignal:
-		return txClosedUnexpectedlyErr()
-	}
-}
-
-// Commit implements database/sql.Tx.Commit method
-func (tx *YDBTx) Commit() error {
-	if err := tx.prepareTxClose(); err != nil {
-		return err
-	}
-
-	errChan := make(chan error, 1)
-	select {
-	case tx.commitOrRollbackChan <- &commitOrRollbackRequest{
-		shouldCommit: true,
-		errChan:      errChan,
-	}:
-	case <-tx.closedSignal:
-		return txClosedUnexpectedlyErr()
-	}
-
-	select {
-	case err := <-errChan:
-		return err
-	case <-tx.closedSignal:
-		return txClosedUnexpectedlyErr()
-	}
-}
-
-// Commit implements database/sql.Tx.Rollback method
-func (tx *YDBTx) Rollback() error {
-	if err := tx.prepareTxClose(); err != nil {
-		return err
-	}
-
-	errChan := make(chan error, 1)
-	select {
-	case tx.commitOrRollbackChan <- &commitOrRollbackRequest{
-		shouldCommit: false,
-		errChan:      errChan,
-	}:
-	case <-tx.closedSignal:
-		return nil
-	}
-
-	select {
-	case <-errChan:
-		return nil
-	case <-tx.closedSignal:
-		return nil
-	}
-}
-
-func (tx *YDBTx) start(ctx context.Context) {
-	go tx.runDoTx(ctx)
-}
-
-// runDoTx runs in background and coordinates with DoTx callback.
-func (tx *YDBTx) runDoTx(ctx context.Context) {
-	defer close(tx.closedSignal)
-
-	err := tx.driver.driver.Query().DoTx(
-		ctx,
-		func(ctx context.Context, txActor ydbQuery.TxActor) error {
-			// Signal that we're ready to receive operations
-			close(tx.readySignal)
-
-			for {
-				select {
-				case op := <-tx.operationsChan:
-					err := op.operationFn(txActor)
-
-					select {
-					case tx.resultsChan <- &txResult{err: err}:
-					case <-ctx.Done():
-						return ctx.Err()
-					}
-
-				case req := <-tx.commitOrRollbackChan:
-					if req.shouldCommit {
-						req.errChan <- nil
-						return nil
-					} else {
-						req.errChan <- nil
-						return fmt.Errorf("dialect/ydb: transaction was rolled back")
-					}
-
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			}
-		},
-		tx.doTxOpts...,
+		yqlOpts.retryOptions...,
 	)
+}
 
-	if err != nil {
-		tx.mutex.Lock()
-		tx.startErr = err
-		tx.mutex.Unlock()
+// Query implements the dialect.Query method.
+//
+// args [any] must be an instance of [YqlOptions]
+// v [any] must be a *[*sql.Rows]
+func (tx *YDBTx) Query(ctx context.Context, query string, args any, v any) error {
+	yqlOpts, ok := args.(YqlOptions)
+	if !ok && args != nil {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T  of 'args'. Expect dialect/ydb.YqlOptions",
+			args,
+		)
 	}
-}
 
-func (tx *YDBTx) checkTxState() error {
-	tx.mutex.Lock()
-	defer tx.mutex.Unlock()
+	rowsPtr, ok := v.(**sql.Rows)
+	if !ok {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T of 'v'. expect **database/sql.Rows",
+			v,
+		)
+	}
 
-	return tx.checkStartOrClosedErrs()
-}
-
-func (tx *YDBTx) prepareTxClose() error {
-	tx.mutex.Lock()
-	defer tx.mutex.Unlock()
-
-	if err := tx.checkStartOrClosedErrs(); err != nil {
+	res, err := retry.RetryWithResult(
+		ctx,
+		func(ctx context.Context) (*sql.Rows, error) {
+			rows, err := tx.sqlTx.QueryContext(
+				ctx,
+				query,
+				yqlOpts.sqlArgs...,
+			)
+			if err != nil {
+				return nil, err
+			}
+			return rows, nil
+		},
+		yqlOpts.retryOptions...,
+	)
+	if err != nil {
 		return err
 	}
 
-	tx.isAboutToClose = true
+	*rowsPtr = res
 	return nil
 }
 
-func (tx *YDBTx) checkStartOrClosedErrs() error {
-	if tx.startErr != nil {
-		return txFailedToStartErr(tx.startErr)
-	}
-	if tx.isAboutToClose {
-		return txAlreadyClosedErr()
-	}
-	return nil
+// Commit implements [sql.Tx.Commit] method
+func (tx *YDBTx) Commit() error {
+	return tx.sqlTx.Commit()
 }
 
-func txFailedToStartErr(startErr error) error {
-	return fmt.Errorf("dialect/ydb: transaction failed to start: %v", startErr)
-}
-
-func txClosedUnexpectedlyErr() error {
-	return fmt.Errorf("dialect/ydb: transaction closed unexpectedly")
-}
-
-func txAlreadyClosedErr() error {
-	return fmt.Errorf("dialect/ydb: transaction already closed")
+// Commit implements [sql.Tx.Rollback] method
+func (tx *YDBTx) Rollback() error {
+	return tx.sqlTx.Rollback()
 }

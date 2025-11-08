@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultDSN = "grpc://localhost:2136/local"
-	
+
 	createTestUsersTable = `
 		CREATE TABLE test_users (
 			id Int64 NOT NULL,
@@ -29,30 +29,30 @@ const (
 // setupDriver opens a YDB driver connection and registers cleanup
 func setupDriver(t *testing.T, ctx context.Context) *YDBDriver {
 	t.Helper()
-	
+
 	driver, err := Open(ctx, defaultDSN)
 	require.NoError(t, err, "Should open connection to YDB")
-	
+
 	t.Cleanup(func() {
 		driver.Close()
 	})
-	
+
 	return driver
 }
 
-// setupTable creates `test_users`` table and registers cleanup to drop it
+// setupTable creates `test_users` table and registers cleanup to drop it
 func setupTable(
 	t *testing.T,
 	ctx context.Context,
 	driver *YDBDriver,
 ) {
 	t.Helper()
-	
+
 	t.Cleanup(func() {
 		err := driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 		require.NoError(t, err, "DROP TABLE should execute without err")
 	})
-	
+
 	_ = driver.Exec(ctx, "DROP TABLE IF EXISTS test_users", nil, nil)
 	err := driver.Exec(ctx, createTestUsersTable, nil, nil)
 	require.NoError(t, err, "CREATE TABLE should execute without err")
@@ -65,26 +65,26 @@ func queryRowCount(
 	driver *YDBDriver,
 ) uint64 {
 	t.Helper()
-	
+
 	var result query.Result
 	t.Cleanup(func() { result.Close(ctx) })
-	
+
 	err := driver.Query(ctx, "SELECT COUNT(*) AS `count` FROM test_users", nil, &result)
 	require.NoError(t, err, "SELECT COUNT(*) should execute without err")
 	require.NotNil(t, result, "Result of SELECT should not be nil")
-	
+
 	rs, err := result.NextResultSet(ctx)
 	require.NoError(t, err, "Result should contain at least 1 result set")
-	
+
 	row, err := rs.NextRow(ctx)
 	require.NoError(t, err, "Result set should contain at least 1 row")
-	
+
 	var resStruct struct {
 		Count uint64 `sql:"count"`
 	}
 	err = row.ScanStruct(&resStruct)
 	require.NoError(t, err, "Row scanning should execute without err")
-	
+
 	return resStruct.Count
 }
 
@@ -97,20 +97,20 @@ func scanSingleRow(
 	dest interface{},
 ) {
 	t.Helper()
-	
+
 	var result query.Result
 	t.Cleanup(func() { result.Close(ctx) })
-	
+
 	err := driver.Query(ctx, queryStr, nil, &result)
 	require.NoError(t, err, "Query should execute without err")
 	require.NotNil(t, result, "Result should not be nil")
-	
+
 	rs, err := result.NextResultSet(ctx)
 	require.NoError(t, err, "Result should contain at least 1 result set")
-	
+
 	row, err := rs.NextRow(ctx)
 	require.NoError(t, err, "Result set should contain at least 1 row")
-	
+
 	err = row.ScanStruct(dest)
 	require.NoError(t, err, "Row scanning should succeed")
 }
@@ -121,14 +121,14 @@ func TestOpenAndClose(t *testing.T) {
 
 	// When
 	driver, err := Open(ctx, defaultDSN)
-	
+
 	// Then
 	require.NoError(t, err, "should open connection to YDB")
 	require.NotNil(t, driver)
 
 	// When
 	err = driver.Close()
-	
+
 	// Then
 	require.NoError(t, err, "should close connection")
 }

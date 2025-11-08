@@ -6,45 +6,68 @@ package ydb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"time"
 
 	"entgo.io/ent/dialect"
 	ydb "github.com/ydb-platform/ydb-go-sdk/v3"
 	ydbQuery "github.com/ydb-platform/ydb-go-sdk/v3/query"
 )
 
-// YDBDriver is a dialect.Driver implementation for YDB.
+// YDBDriver is a [dialect.Driver] implementation for YDB.
 type YDBDriver struct {
 	dialect.Driver
 
-	driver *ydb.Driver
+	nativeDriver *ydb.Driver
+	dbSqlDriver  *sql.DB
 }
 
 func Open(ctx context.Context, dsn string) (*YDBDriver, error) {
-	db, err := ydb.Open(ctx, dsn)
+	nativeDriver, err := ydb.Open(ctx, dsn)
 	if err != nil {
 		return nil, err
 	}
 
+	conn, err := ydb.Connector(
+		nativeDriver,
+		ydb.WithAutoDeclare(),
+		ydb.WithTablePathPrefix(nativeDriver.Name()),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	dbSqlDriver := sql.OpenDB(conn)
+	dbSqlDriver.SetMaxOpenConns(50)
+	dbSqlDriver.SetMaxIdleConns(50)
+	dbSqlDriver.SetConnMaxIdleTime(time.Second)
+
 	return &YDBDriver{
-		driver: db,
+		nativeDriver: nativeDriver,
+		dbSqlDriver:  dbSqlDriver,
 	}, nil
 }
 
-// Exec implements the dialect.Exec method.
+// DB returns the underlying *[sql.DB] instance.
+func (y YDBDriver) DB() *sql.DB {
+	return y.dbSqlDriver
+}
+
+// Exec implements the [dialect.Driver.Exec] method.
 //
-// [v any] is never used since YDB's Executor.Exec never returns value
-// [args any] must be an instance of dialect/ydb.YqlOptions
+// args [any] must be an instance of [YqlOptions]
+// v [any] is never used since YDB's [Executor.Exec] never returns value
 func (y *YDBDriver) Exec(ctx context.Context, query string, args any, v any) error {
 	yqlOpts, ok := args.(YqlOptions)
-	if !ok {
+	if !ok && args != nil {
 		return fmt.Errorf(
-			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			"dialect/ydb: invalid type %T  of 'args'. Expect dialect/ydb.YqlOptions",
 			args,
 		)
 	}
 
-	return y.driver.Query().Do(
+	return y.nativeDriver.Query().Do(
 		ctx,
 		func(ctx context.Context, s ydbQuery.Session) error {
 			return s.Exec(
@@ -57,28 +80,28 @@ func (y *YDBDriver) Exec(ctx context.Context, query string, args any, v any) err
 	)
 }
 
-// Query implements the dialect.Query method.
+// Query implements the [dialect.Driver.Query] method.
 //
-// Type of [v any] must an instance of *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
-// [args any] must be an instance of dialect/ydb.YqlOptions
+// args [any] must be an instance of [YqlOptions]
+// v [any] must an instance of [*ydbQuery.Result]
 func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) error {
 	ydbResult, ok := v.(*ydbQuery.Result)
 	if !ok {
 		return fmt.Errorf(
-			"dialect/ydb: invalid type %T. expect *github.com/ydb-platform/ydb-go-sdk/v3/query.Result",
+			"dialect/ydb: invalid type %T  of 'v'. expect *github.com/ydb-platform/ydb-go-sdk/v3/query.Result",
 			v,
 		)
 	}
 
 	yqlOpts, ok := args.(YqlOptions)
-	if !ok {
+	if !ok && args != nil {
 		return fmt.Errorf(
-			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			"dialect/ydb: invalid type %T  of 'args'. Expect dialect/ydb.YqlOptions",
 			args,
 		)
 	}
 
-	return y.driver.Query().Do(
+	return y.nativeDriver.Query().Do(
 		ctx,
 		func(ctx context.Context, s ydbQuery.Session) error {
 			result, err := s.Query(
@@ -89,10 +112,6 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 			if err != nil {
 				return err
 			}
-
-			// defer func() {
-			// 	_ = result.Close(ctx)
-			// }()
 
 			*ydbResult = result
 			return nil
@@ -108,14 +127,14 @@ func (y *YDBDriver) Tx(ctx context.Context) (dialect.Tx, error) {
 
 // Close closes the underlying connection.
 func (y *YDBDriver) Close() error {
-	if y.driver == nil {
+	if y.nativeDriver == nil {
 		return nil
 	}
 	ctx := context.Background()
-	return y.driver.Close(ctx)
+	return y.nativeDriver.Close(ctx)
 }
 
-// Dialect implements the dialect.Dialect method.
+// Dialect implements the [dialect.Driver.Dialect] method.
 func (y *YDBDriver) Dialect() string {
 	return dialect.YDB
 }
