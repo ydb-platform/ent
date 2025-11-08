@@ -34,11 +34,15 @@ func Open(ctx context.Context, dsn string) (*YDBDriver, error) {
 // Exec implements the dialect.Exec method.
 //
 // [v any] is never used since YDB's Executor.Exec never returns value
-//
-// [args any] is never used. Use WithDoOptions() or WithExecOptions() for passing parameters
+// [args any] must be an instance of dialect/ydb.YqlOptions
 func (y *YDBDriver) Exec(ctx context.Context, query string, args any, v any) error {
-	doOpts := getDoOptions(ctx)
-	execOpts := getExecOptions(ctx)
+	yqlOpts, ok := args.(YqlOptions)
+	if !ok {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			args,
+		)
+	}
 
 	return y.driver.Query().Do(
 		ctx,
@@ -46,18 +50,17 @@ func (y *YDBDriver) Exec(ctx context.Context, query string, args any, v any) err
 			return s.Exec(
 				ctx,
 				query,
-				execOpts...,
+				yqlOpts.execOptions...,
 			)
 		},
-		doOpts...,
+		yqlOpts.doOptions...,
 	)
 }
 
 // Query implements the dialect.Query method.
 //
-// Type of [v any] must be *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
-//
-// [args any] is never used. Use WithDoOptions() or WithExecOptions() for passing parameters
+// Type of [v any] must an instance of *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
+// [args any] must be an instance of dialect/ydb.YqlOptions
 func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) error {
 	ydbResult, ok := v.(*ydbQuery.Result)
 	if !ok {
@@ -67,8 +70,13 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 		)
 	}
 
-	doOpts := getDoOptions(ctx)
-	execOpts := getExecOptions(ctx)
+	yqlOpts, ok := args.(YqlOptions)
+	if !ok {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			args,
+		)
+	}
 
 	return y.driver.Query().Do(
 		ctx,
@@ -76,7 +84,7 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 			result, err := s.Query(
 				ctx,
 				query,
-				execOpts...,
+				yqlOpts.execOptions...,
 			)
 			if err != nil {
 				return err
@@ -89,7 +97,7 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 			*ydbResult = result
 			return nil
 		},
-		doOpts...,
+		yqlOpts.doOptions...,
 	)
 }
 

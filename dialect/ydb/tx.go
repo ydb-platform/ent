@@ -55,6 +55,7 @@ type commitOrRollbackRequest struct {
 func newYDBTx(
 	ctx context.Context,
 	driver *YDBDriver,
+	yqlOpts YqlOptions,
 ) (*YDBTx, error) {
 	tx := &YDBTx{
 		driver:               driver,
@@ -63,7 +64,7 @@ func newYDBTx(
 		commitOrRollbackChan: make(chan *commitOrRollbackRequest),
 		readySignal:          make(chan struct{}),
 		closedSignal:         make(chan struct{}),
-		doTxOpts:             getDoTxOptions(ctx),
+		doTxOpts:             yqlOpts.doTxOptions,
 	}
 
 	tx.start(ctx)
@@ -79,9 +80,20 @@ func newYDBTx(
 }
 
 // Exec implements dialect.Exec method
+//
+// [v any] is never used since YDB's Executor.Exec never returns value
+// [args any] must be an instance of dialect/ydb.YqlOptions
 func (tx *YDBTx) Exec(ctx context.Context, query string, args any, v any) error {
 	if err := tx.checkTxState(); err != nil {
 		return err
+	}
+
+	yqlOpts, ok := args.(YqlOptions)
+	if !ok {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			args,
+		)
 	}
 
 	select {
@@ -92,7 +104,7 @@ func (tx *YDBTx) Exec(ctx context.Context, query string, args any, v any) error 
 			return actor.Exec(
 				ctx,
 				query,
-				getExecOptions(ctx)...,
+				yqlOpts.execOptions...,
 			)
 		},
 	}:
@@ -112,10 +124,29 @@ func (tx *YDBTx) Exec(ctx context.Context, query string, args any, v any) error 
 	}
 }
 
-// Query implements dialect.Query method
+// Query implements the dialect.Query method.
+//
+// Type of [v any] must an instance of *github.com/ydb-platform/ydb-go-sdk/v3/query.Result
+// [args any] must be an instance of dialect/ydb.YqlOptions
 func (tx *YDBTx) Query(ctx context.Context, query string, args any, v any) error {
 	if err := tx.checkTxState(); err != nil {
 		return err
+	}
+
+	ydbResult, ok := v.(*ydbQuery.Result)
+	if !ok {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T. expect *github.com/ydb-platform/ydb-go-sdk/v3/query.Result",
+			v,
+		)
+	}
+
+	yqlOpts, ok := args.(YqlOptions)
+	if !ok {
+		return fmt.Errorf(
+			"dialect/ydb: invalid type %T. Expect dialect/ydb.YqlOptions",
+			args,
+		)
 	}
 
 	select {
@@ -126,18 +157,10 @@ func (tx *YDBTx) Query(ctx context.Context, query string, args any, v any) error
 			result, err := executor.Query(
 				ctx,
 				query,
-				getExecOptions(ctx)...,
+				yqlOpts.execOptions...,
 			)
 			if err != nil {
 				return err
-			}
-
-			ydbResult, ok := v.(*ydbQuery.Result)
-			if !ok {
-				return fmt.Errorf(
-					"dialect/ydb: invalid type %T. expect *github.com/ydb-platform/ydb-go-sdk/v3/query.Result",
-					v,
-				)
 			}
 
 			*ydbResult = result
