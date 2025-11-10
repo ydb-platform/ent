@@ -2,7 +2,6 @@ package ydb
 
 import (
 	"github.com/ydb-platform/ydb-go-sdk/v3/query"
-	"github.com/ydb-platform/ydb-go-sdk/v3/retry"
 )
 
 type ctxKey int
@@ -17,10 +16,9 @@ const ctxKeyOptions ctxKey = 0
 //	WithExecOptions(query.WithParameters(...)).
 //	WithExecOptions(query.WithTxControl(...))
 type YqlOptions struct {
-	doOptions    []query.DoOption
-	execOptions  []query.ExecuteOption
-	retryOptions []retry.Option
-	sqlArgs      []any
+	doOptions   []query.DoOption
+	execOptions []query.ExecuteOption
+	queryArgs   []any
 }
 
 func NewYqlOptions() *YqlOptions {
@@ -37,12 +35,7 @@ func (o *YqlOptions) WithExecOptions(opts ...query.ExecuteOption) *YqlOptions {
 	return o
 }
 
-func (o *YqlOptions) WithRetryOptions(opts ...retry.Option) *YqlOptions {
-	o.retryOptions = append(o.retryOptions, opts...)
-	return o
-}
-
-func (o *YqlOptions) WithSqlArgs(args ...any) *YqlOptions {
-	o.sqlArgs = append(o.sqlArgs, args...)
+func (o *YqlOptions) WithQueryArgs(args ...any) *YqlOptions {
+	o.queryArgs = append(o.queryArgs, args...)
 	return o
 }

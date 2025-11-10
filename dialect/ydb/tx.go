@@ -10,7 +10,6 @@ import (
 	"fmt"
 
 	"entgo.io/ent/dialect"
-	"github.com/ydb-platform/ydb-go-sdk/v3/retry"
 )
 
 // YDBTx implements [dialect.Tx] for YDB driver and represents YBD's interactive transaction.
@@ -61,25 +60,19 @@ func (tx *YDBTx) Exec(ctx context.Context, query string, args any, v any) error 
 		)
 	}
 
-	return retry.Retry(
+	res, err := tx.sqlTx.ExecContext(
 		ctx,
-		func(ctx context.Context) (err error) {
-			res, err := tx.sqlTx.ExecContext(
-				ctx,
-				query,
-				yqlOpts.sqlArgs...,
-			)
-			if err != nil {
-				return err
-			}
-
-			if resPtr != nil {
-				*resPtr = res
-			}
-			return nil
-		},
-		yqlOpts.retryOptions...,
+		query,
+		yqlOpts.queryArgs...,
 	)
+	if err != nil {
+		return err
+	}
+
+	if resPtr != nil {
+		*resPtr = res
+	}
+	return nil
 }
 
 // Query implements the dialect.Query method.
@@ -103,26 +96,16 @@ func (tx *YDBTx) Query(ctx context.Context, query string, args any, v any) error
 		)
 	}
 
-	res, err := retry.RetryWithResult(
+	rows, err := tx.sqlTx.QueryContext(
 		ctx,
-		func(ctx context.Context) (*sql.Rows, error) {
-			rows, err := tx.sqlTx.QueryContext(
-				ctx,
-				query,
-				yqlOpts.sqlArgs...,
-			)
-			if err != nil {
-				return nil, err
-			}
-			return rows, nil
-		},
-		yqlOpts.retryOptions...,
+		query,
+		yqlOpts.queryArgs...,
 	)
 	if err != nil {
 		return err
 	}
 
-	*rowsPtr = res
+	*rowsPtr = rows
 	return nil
 }
 
