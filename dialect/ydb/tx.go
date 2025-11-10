@@ -24,12 +24,11 @@ type YDBTx struct {
 func newYDBTx(
 	ctx context.Context,
 	driver *YDBDriver,
+	opts *sql.TxOptions,
 ) (*YDBTx, error) {
 	tx, err := driver.dbSqlDriver.BeginTx(
 		ctx,
-		&sql.TxOptions{ // ????
-			Isolation: sql.LevelSerializable,
-		},
+		opts,
 	)
 	if err != nil {
 		return nil, err

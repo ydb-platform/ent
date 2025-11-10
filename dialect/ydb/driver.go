@@ -122,7 +122,12 @@ func (y *YDBDriver) Query(ctx context.Context, query string, args any, v any) er
 
 // Tx starts and returns a new YDB interactive transaction.
 func (y *YDBDriver) Tx(ctx context.Context) (dialect.Tx, error) {
-	return newYDBTx(ctx, y)
+	return y.BeginTx(ctx, nil)
+}
+
+// BeginTx starts a transaction with options.
+func (y *YDBDriver) BeginTx(ctx context.Context, opts *sql.TxOptions) (dialect.Tx, error) {
+	return newYDBTx(ctx, y, opts)
 }
 
 // Close closes the underlying connection.
