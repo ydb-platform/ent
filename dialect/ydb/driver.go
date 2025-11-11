@@ -1,4 +1,4 @@
-// Copyright 2024-present Facebook Inc. All rights reserved.
+// Copyright 2019-present Facebook Inc. All rights reserved.
 // This source code is licensed under the Apache 2.0 license found
 // in the LICENSE file in the root directory of this source tree.
 
@@ -35,10 +35,10 @@ func Open(ctx context.Context, dsn string) (*YDBDriver, error) {
 		panic(err)
 	}
 
-	dbSqlDriver := sql.OpenDB(conn)
+	dbSQLDriver := sql.OpenDB(conn)
 
 	return &YDBDriver{
-		Driver:       entSql.OpenDB(dialect.YDB, dbSqlDriver),
+		Driver:       entSql.OpenDB(dialect.YDB, dbSQLDriver),
 		nativeDriver: nativeDriver,
 	}, nil
 }

@@ -1,4 +1,4 @@
-// Copyright 2024-present Facebook Inc. All rights reserved.
+// Copyright 2019-present Facebook Inc. All rights reserved.
 // This source code is licensed under the Apache 2.0 license found
 // in the LICENSE file in the root directory of this source tree.
 
@@ -90,7 +90,7 @@ func TestExecInsert(t *testing.T) {
 	require.NoError(t, err, "INSERT data execute without err")
 
 	// Then - verify row count
-	mock.ExpectQuery("SELECT COUNT(*) AS").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) AS").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 
 	var rows entSql.Rows
@@ -131,7 +131,7 @@ func TestExecUpdate(t *testing.T) {
 	require.NoError(t, err, "should update data")
 
 	// Then
-	mock.ExpectQuery("SELECT * FROM test_users").
+	mock.ExpectQuery("SELECT \\* FROM test_users").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "age"}).
 			AddRow(1, "Alice", 31))
 
@@ -174,7 +174,7 @@ func TestExecDelete(t *testing.T) {
 	require.NoError(t, err, "DELETE request should execute without err")
 
 	// Then
-	mock.ExpectQuery("SELECT COUNT(*)").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
 	var rows entSql.Rows
@@ -200,7 +200,7 @@ func TestQueryEmptyTable(t *testing.T) {
 	drv := &YDBDriver{Driver: entSql.OpenDB(dialect.YDB, db)}
 
 	// When
-	mock.ExpectQuery("SELECT * FROM test_users").
+	mock.ExpectQuery("SELECT \\* FROM test_users").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "age"}))
 
 	var rows entSql.Rows
@@ -239,7 +239,7 @@ func TestExecMultipleInserts(t *testing.T) {
 	}
 
 	// Then
-	mock.ExpectQuery("SELECT COUNT(*)").
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\)").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(10))
 
 	var rows entSql.Rows
@@ -266,7 +266,7 @@ func TestQueryInvalidQuery(t *testing.T) {
 
 	// When
 	invalidQuery := "SELECT * FROM non_existent_table"
-	mock.ExpectQuery("SELECT * FROM non_existent_table").
+	mock.ExpectQuery("SELECT \\* FROM non_existent_table").
 		WillReturnError(fmt.Errorf("table not found"))
 
 	var rows entSql.Rows
