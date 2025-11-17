@@ -693,6 +693,10 @@ type DeleteBuilder struct {
 	table  string
 	schema string
 	where  *Predicate
+
+	// For YDB's DELETE FROM ... ON SELECT pattern
+	onSelect  *Selector
+	returning []string
 }
 
 // Delete creates a builder for the `DELETE` statement.
@@ -735,16 +739,50 @@ func (d *DeleteBuilder) FromSelect(s *Selector) *DeleteBuilder {
 	return d
 }
 
+// On sets the subquery for DELETE FROM ... ON SELECT pattern (YDB-specific).
+// This allows deleting rows based on a subquery that returns primary key columns.
+//
+//	Delete("users").
+//		On(Select("id").From(Table("users")).Where(EQ("status", "inactive")))
+func (d *DeleteBuilder) On(s *Selector) *DeleteBuilder {
+	if d.ydb() {
+		d.onSelect = s
+	} else {
+		d.AddError(fmt.Errorf("On: unsupported dialect: %q", d.dialect))
+	}
+	return d
+}
+
+// Returning adds the `RETURNING` clause to the delete statement.
+// Supported by YDB.
+func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
+	if d.ydb() {
+		d.returning = columns
+	} else {
+		d.AddError(fmt.Errorf("Returning: unsupported dialect: %q", d.dialect))
+	}
+	return d
+}
+
 // Query returns query representation of a `DELETE` statement.
 func (d *DeleteBuilder) Query() (string, []any) {
-	d.WriteString("DELETE FROM ")
-	d.writeSchema(d.schema)
-	d.Ident(d.table)
-	if d.where != nil {
-		d.WriteString(" WHERE ")
-		d.Join(d.where)
+	b := d.Builder.clone()
+	b.WriteString("DELETE FROM ")
+	b.writeSchema(d.schema)
+	b.Ident(d.table)
+
+	// YDB-specific DELETE ON SELECT pattern
+	if d.onSelect != nil {
+		d.onSelect.SetDialect(b.dialect)
+		b.WriteString(" ON ")
+		b.Join(d.onSelect)
+	} else if d.where != nil {
+		b.WriteString(" WHERE ")
+		b.Join(d.where)
 	}
-	return d.String(), d.args
+
+	joinReturning(d.returning, &b)
+	return b.String(), b.args
 }
 
 // Predicate is a where predicate.
@@ -2648,7 +2686,8 @@ func joinOrder(order []any, b *Builder) {
 }
 
 func joinReturning(columns []string, b *Builder) {
-	if len(columns) == 0 || (!b.postgres() && !b.sqlite()) {
+	supportedByDialect := b.postgres() || b.sqlite() || b.ydb()
+	if len(columns) == 0 || !supportedByDialect {
 		return
 	}
 	b.WriteString(" RETURNING ")
@@ -3177,6 +3216,9 @@ func (b *Builder) Arg(a any) *Builder {
 		// Postgres' arguments are referenced using the syntax $n.
 		// $1 refers to the 1st argument, $2 to the 2nd, and so on.
 		format = "$" + strconv.Itoa(b.total+1)
+	} else if b.ydb() {
+		// YDB uses named parameters with the syntax $paramName.
+		format = "$p" + strconv.Itoa(b.total)
 	}
 	if f, ok := a.(ParamFormatter); ok {
 		format = f.FormatParam(format, &StmtInfo{
@@ -3215,7 +3257,16 @@ func (b *Builder) Argf(format string, a any) *Builder {
 		return b
 	}
 	b.total++
-	b.args = append(b.args, a)
+
+	// YDB requires named parameters
+	if b.ydb() {
+		// Extract parameter name from format (e.g., "$p0" -> "p0")
+		paramName := strings.TrimPrefix(format, "$")
+		b.args = append(b.args, driver.NamedValue{Name: paramName, Value: a})
+	} else {
+		b.args = append(b.args, a)
+	}
+
 	b.WriteString(format)
 	return b
 }
@@ -3329,6 +3380,11 @@ func (b Builder) postgres() bool {
 // sqlite reports if the builder dialect is SQLite.
 func (b Builder) sqlite() bool {
 	return b.Dialect() == dialect.SQLite
+}
+
+// ydb reports if the builder dialect is YDB.
+func (b Builder) ydb() bool {
+	return b.Dialect() == dialect.YDB
 }
 
 // fromIdent sets the builder dialect from the identifier format.

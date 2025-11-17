@@ -1475,6 +1475,131 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 				From(Select("name", "age").From(Table("users"))),
 			wantQuery: "SELECT `name` FROM (SELECT `name`, `age` FROM `users`)",
 		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(EQ("id", 1)),
+			wantQuery: "DELETE FROM `users` WHERE `id` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: 1}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(EQ("status", "inactive")).
+				Where(LT("last_login", "2024-01-01")),
+			wantQuery: "DELETE FROM `users` WHERE `status` = $p0 AND `last_login` < $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "inactive"},
+				driver.NamedValue{Name: "p1", Value: "2024-01-01"},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(And(
+					EQ("status", "cancelled"),
+					GT("age", 18),
+				)),
+			wantQuery: "DELETE FROM `users` WHERE `status` = $p0 AND `age` > $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "cancelled"},
+				driver.NamedValue{Name: "p1", Value: 18},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(Or(
+					EQ("status", "cancelled"),
+					EQ("status", "expired"),
+				)),
+			wantQuery: "DELETE FROM `users` WHERE `status` = $p0 OR `status` = $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "cancelled"},
+				driver.NamedValue{Name: "p1", Value: "expired"},
+			},
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				subquery := d.Select("id", "email").
+					From(Table("users")).
+					Where(EQ("status", "ToDelete"))
+				return d.Delete("users").On(subquery)
+			}(),
+			wantQuery: "DELETE FROM `users` ON SELECT `id`, `email` FROM `users` WHERE `status` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "ToDelete"}},
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				subquery := d.Select("*").
+					From(Table("temp_delete_list"))
+				return d.Delete("users").On(subquery)
+			}(),
+			wantQuery: "DELETE FROM `users` ON SELECT * FROM `temp_delete_list`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("orders").
+				Where(EQ("status", "cancelled")).
+				Returning("*"),
+			wantQuery: "DELETE FROM `orders` WHERE `status` = $p0 RETURNING *",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "cancelled"}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("orders").
+				Where(EQ("status", "cancelled")).
+				Returning("order_id", "order_date"),
+			wantQuery: "DELETE FROM `orders` WHERE `status` = $p0 RETURNING `order_id`, `order_date`",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "cancelled"}},
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				subquery := d.Select("id").
+					From(Table("temp_ids"))
+				return d.Delete("users").
+					On(subquery).
+					Returning("id", "name")
+			}(),
+			wantQuery: "DELETE FROM `users` ON SELECT `id` FROM `temp_ids` RETURNING `id`, `name`",
+		},
+		{
+			input:     Dialect(dialect.YDB).Delete("users"),
+			wantQuery: "DELETE FROM `users`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Insert("users").
+				Columns("name", "age").
+				Values("a8m", 10),
+			wantQuery: "INSERT INTO `users` (`name`, `age`) VALUES ($p0, $p1)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "a8m"},
+				driver.NamedValue{Name: "p1", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Update("users").
+				Set("name", "foo").
+				Where(EQ("id", 1)),
+			wantQuery: "UPDATE `users` SET `name` = $p0 WHERE `id` = $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "foo"},
+				driver.NamedValue{Name: "p1", Value: 1},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("*").
+				From(Table("users")).
+				Where(EQ("name", "Alex")),
+			wantQuery: "SELECT * FROM `users` WHERE `name` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "Alex"}},
+		},
 	}
 	for i, tt := range tests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
