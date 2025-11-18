@@ -1600,6 +1600,84 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 			wantQuery: "SELECT * FROM `users` WHERE `name` = $p0",
 			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "Alex"}},
 		},
+		{
+			input: Dialect(dialect.YDB).
+				Insert("users").
+				Columns("name", "age").
+				Values("a8m", 10).
+				Returning("id"),
+			wantQuery: "INSERT INTO `users` (`name`, `age`) VALUES ($p0, $p1) RETURNING `id`",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "a8m"},
+				driver.NamedValue{Name: "p1", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Insert("users").
+				Columns("name", "age").
+				Values("a8m", 10).
+				Returning("*"),
+			wantQuery: "INSERT INTO `users` (`name`, `age`) VALUES ($p0, $p1) RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "a8m"},
+				driver.NamedValue{Name: "p1", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("users").
+				Columns("id", "name", "age").
+				Values(1, "a8m", 10),
+			wantQuery: "UPSERT INTO `users` (`id`, `name`, `age`) VALUES ($p0, $p1, $p2)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1},
+				driver.NamedValue{Name: "p1", Value: "a8m"},
+				driver.NamedValue{Name: "p2", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("users").
+				Columns("id", "name", "age").
+				Values(1, "a8m", 10).
+				Values(2, "foo", 20),
+			wantQuery: "UPSERT INTO `users` (`id`, `name`, `age`) VALUES ($p0, $p1, $p2), ($p3, $p4, $p5)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1},
+				driver.NamedValue{Name: "p1", Value: "a8m"},
+				driver.NamedValue{Name: "p2", Value: 10},
+				driver.NamedValue{Name: "p3", Value: 2},
+				driver.NamedValue{Name: "p4", Value: "foo"},
+				driver.NamedValue{Name: "p5", Value: 20},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("orders").
+				Columns("order_id", "status", "amount").
+				Values(1001, "shipped", 500).
+				Returning("*"),
+			wantQuery: "UPSERT INTO `orders` (`order_id`, `status`, `amount`) VALUES ($p0, $p1, $p2) RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1001},
+				driver.NamedValue{Name: "p1", Value: "shipped"},
+				driver.NamedValue{Name: "p2", Value: 500},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("users").
+				Columns("user_id", "name", "email").
+				Values(42, "John Doe", "john@example.com").
+				Returning("user_id", "email"),
+			wantQuery: "UPSERT INTO `users` (`user_id`, `name`, `email`) VALUES ($p0, $p1, $p2) RETURNING `user_id`, `email`",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 42},
+				driver.NamedValue{Name: "p1", Value: "John Doe"},
+				driver.NamedValue{Name: "p2", Value: "john@example.com"},
+			},
+		},
 	}
 	for i, tt := range tests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -1622,6 +1700,22 @@ func TestBuilder_Err(t *testing.T) {
 	}))
 	_, _ = b.Query()
 	require.EqualError(t, b.Err(), "invalid; unexpected; inner")
+
+	u := Dialect(dialect.MySQL).
+		Upsert("users").
+		Columns("id", "name").
+		Values(1, "foo")
+	_, _, err := u.QueryErr()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "UPSERT: unsupported dialect")
+
+	u = Dialect(dialect.Postgres).
+		Upsert("users").
+		Columns("id", "name").
+		Values(1, "foo")
+	_, _, err = u.QueryErr()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "UPSERT: unsupported dialect")
 }
 
 func TestSelector_OrderByExpr(t *testing.T) {

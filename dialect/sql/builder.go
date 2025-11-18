@@ -146,6 +146,7 @@ type InsertBuilder struct {
 	returning []string
 	values    [][]any
 	conflict  *conflict
+	isUpsert    bool // YDB-specific: use UPSERT instead of INSERT
 }
 
 // Insert creates a builder for the `INSERT INTO` statement.
@@ -157,6 +158,21 @@ type InsertBuilder struct {
 //
 // Note: Insert inserts all values in one batch.
 func Insert(table string) *InsertBuilder { return &InsertBuilder{table: table} }
+
+// Upsert creates a builder for the `UPSERT INTO` statement.
+// UPSERT updates or inserts rows based on primary key comparison.
+// For existing rows, specified columns are updated while other columns are preserved.
+// For missing rows, new rows are inserted.
+//
+//	Upsert("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10).
+//		Values(2, "foo", 20)
+//
+// Note: UPSERT is only supported in YDB dialect.
+func Upsert(table string) *InsertBuilder {
+	return &InsertBuilder{table: table, isUpsert: true}
+}
 
 // Schema sets the database name for the insert table.
 func (i *InsertBuilder) Schema(name string) *InsertBuilder {
@@ -438,11 +454,21 @@ func (i *InsertBuilder) Query() (string, []any) {
 	return query, args
 }
 
-// QueryErr returns query representation of an `INSERT INTO`
+// QueryErr returns query representation of an `INSERT INTO` or `UPSERT INTO`
 // statement and any error occurred in building the statement.
 func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	b := i.Builder.clone()
-	b.WriteString("INSERT INTO ")
+
+	if i.isUpsert {
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("UPSERT: unsupported dialect: %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		b.WriteString("UPSERT INTO ")
+	} else {
+		b.WriteString("INSERT INTO ")
+	}
+
 	b.writeSchema(i.schema)
 	b.Ident(i.table).Pad()
 	if i.defaults && len(i.columns) == 0 {
@@ -3489,6 +3515,19 @@ func (d *DialectBuilder) Column(name string) *ColumnBuilder {
 //		Insert("users").Columns("age").Values(1)
 func (d *DialectBuilder) Insert(table string) *InsertBuilder {
 	b := Insert(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
+// Upsert creates an InsertBuilder for the UPSERT statement with the configured dialect.
+// UPSERT is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		Upsert("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10)
+func (d *DialectBuilder) Upsert(table string) *InsertBuilder {
+	b := Upsert(table)
 	b.SetDialect(d.dialect)
 	return b
 }
