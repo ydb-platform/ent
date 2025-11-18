@@ -1702,7 +1702,7 @@ func (s *SelectTable) As(alias string) *SelectTable {
 }
 
 // View sets the secondary index name for the VIEW clause (YDB-specific).
-// This allows explicit use of secondary indexes in JOIN operations.
+// This allows explicit use of secondary indexes in SELECT and JOIN operations.
 //
 //	t := Table("users").View("idx_email").As("u")
 //	Select().From(Table("orders")).Join(t).On(...)
@@ -1710,7 +1710,7 @@ func (s *SelectTable) View(index string) *SelectTable {
 	if s.ydb() {
 		s.index = index
 	} else {
-		s.AddError(fmt.Errorf("JOIN VIEW: unsupported dialect: %q", s.dialect))
+		s.AddError(fmt.Errorf("VIEW: unsupported dialect: %q", s.dialect))
 	}
 	return s
 }
@@ -1792,24 +1792,25 @@ type Selector struct {
 	Builder
 	// ctx stores contextual data typically from
 	// generated code such as alternate table schemas.
-	ctx       context.Context
-	as        string
-	selection []selection
-	from      []TableView
-	joins     []join
-	collected [][]*Predicate
-	where     *Predicate
-	or        bool
-	not       bool
-	order     []any
-	group     []string
-	having    *Predicate
-	limit     *int
-	offset    *int
-	distinct  bool
-	setOps    []setOp
-	prefix    Queries
-	lock      *LockOptions
+	ctx         context.Context
+	as          string
+	selection   []selection
+	from        []TableView
+	joins       []join
+	collected   [][]*Predicate
+	where       *Predicate
+	or          bool
+	not         bool
+	order       []any
+	assumeOrder []string // YDB-specific: ASSUME ORDER BY columns
+	group       []string
+	having      *Predicate
+	limit       *int
+	offset      *int
+	distinct    bool
+	setOps      []setOp
+	prefix      Queries
+	lock        *LockOptions
 }
 
 // New returns a new Selector with the same dialect and context.
@@ -2543,21 +2544,22 @@ func (s *Selector) Clone() *Selector {
 		joins[i] = s.joins[i].clone()
 	}
 	return &Selector{
-		Builder:   s.Builder.clone(),
-		ctx:       s.ctx,
-		as:        s.as,
-		or:        s.or,
-		not:       s.not,
-		from:      s.from,
-		limit:     s.limit,
-		offset:    s.offset,
-		distinct:  s.distinct,
-		where:     s.where.clone(),
-		having:    s.having.clone(),
-		joins:     append([]join{}, joins...),
-		group:     append([]string{}, s.group...),
-		order:     append([]any{}, s.order...),
-		selection: append([]selection{}, s.selection...),
+		Builder:     s.Builder.clone(),
+		ctx:         s.ctx,
+		as:          s.as,
+		or:          s.or,
+		not:         s.not,
+		from:        s.from,
+		limit:       s.limit,
+		offset:      s.offset,
+		distinct:    s.distinct,
+		where:       s.where.clone(),
+		having:      s.having.clone(),
+		joins:       append([]join{}, joins...),
+		group:       append([]string{}, s.group...),
+		order:       append([]any{}, s.order...),
+		assumeOrder: append([]string{}, s.assumeOrder...),
+		selection:   append([]selection{}, s.selection...),
 	}
 }
 
@@ -2585,6 +2587,11 @@ func DescExpr(x Querier) Querier {
 
 // OrderBy appends the `ORDER BY` clause to the `SELECT` statement.
 func (s *Selector) OrderBy(columns ...string) *Selector {
+	if s.ydb() && len(s.assumeOrder) != 0 {
+		s.AddError(fmt.Errorf("ORDER BY: can't be used with ASSUME ORDER BY simultaneously"))
+		return s
+	}
+
 	for i := range columns {
 		s.order = append(s.order, columns[i])
 	}
@@ -2623,6 +2630,27 @@ func (s *Selector) OrderExprFunc(f func(*Builder)) *Selector {
 // ClearOrder clears the ORDER BY clause to be empty.
 func (s *Selector) ClearOrder() *Selector {
 	s.order = nil
+	return s
+}
+
+// AssumeOrderBy appends the `ASSUME ORDER BY` clause to the `SELECT` statement (YDB-specific).
+// This tells YDB to assume the data is already sorted without actually sorting it.
+// This is an optimization hint and only works with column names (not expressions).
+//
+//	Select("*").
+//		From(Table("users")).
+//		AssumeOrderBy("first-key", Desc("second-key"))
+func (s *Selector) AssumeOrderBy(columns ...string) *Selector {
+	if s.ydb() {
+		if len(s.order) != 0 {
+			s.AddError(fmt.Errorf("ASSUME ORDER BY: can't be used with ORDER BY simultaneously"))
+			return s
+		}
+
+		s.assumeOrder = append(s.assumeOrder, columns...)
+	} else {
+		s.AddError(fmt.Errorf("ASSUME ORDER BY: unsupported dialect: %q", s.dialect))
+	}
 	return s
 }
 
@@ -2716,6 +2744,7 @@ func (s *Selector) Query() (string, []any) {
 		s.joinSetOps(&b)
 	}
 	joinOrder(s.order, &b)
+	s.joinAssumeOrder(&b)
 	if s.limit != nil {
 		b.WriteString(" LIMIT ")
 		b.WriteString(strconv.Itoa(*s.limit))
@@ -2791,6 +2820,19 @@ func joinOrder(order []any, b *Builder) {
 		case Querier:
 			b.Join(r)
 		}
+	}
+}
+
+func (s *Selector) joinAssumeOrder(b *Builder) {
+	if !b.ydb() || len(s.assumeOrder) == 0 {
+		return
+	}
+	b.WriteString(" ASSUME ORDER BY ")
+	for i := range s.assumeOrder {
+		if i > 0 {
+			b.Comma()
+		}
+		b.Ident(s.assumeOrder[i])
 	}
 }
 

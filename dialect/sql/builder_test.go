@@ -1846,6 +1846,53 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 			}(),
 			wantQuery: "SELECT `a`.`value`, `b`.`value`, `c`.`column2` FROM `a_table` AS `a` CROSS JOIN `b_table` AS `b` LEFT JOIN `c_table` AS `c` ON `c`.`ref` = `a`.`key` AND `c`.`column1` = `b`.`value`",
 		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("value").
+				From(Table("my_table")).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT `value` FROM `my_table`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("*").
+				From(Table("users")).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT * FROM `users`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("status", "type").
+				From(Table("orders")).
+				Distinct().
+				Where(GT("created_at", "2024-01-01")),
+			wantQuery: "SELECT DISTINCT `status`, `type` FROM `orders` WHERE `created_at` > $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "2024-01-01"}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("category").
+				From(Table("products")).
+				Distinct().
+				OrderBy("category").
+				Limit(10),
+			wantQuery: "SELECT DISTINCT `category` FROM `products` ORDER BY `category` LIMIT 10",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("name", "age").
+				From(Table("users")).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT `name`, `age` FROM `users`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("email").
+				From(Table("subscribers")).
+				Where(EQ("active", true)).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT `email` FROM `subscribers` WHERE `active`",
+		},
 	}
 	for i, tt := range tests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -1969,6 +2016,62 @@ func TestSelector_Union(t *testing.T) {
 		Query()
 	require.Equal(t, `SELECT * FROM "users" WHERE "active" UNION SELECT * FROM "old_users1" WHERE "is_active" AND "age" > $1 UNION ALL SELECT * FROM "old_users2" WHERE "is_active" = $2 AND "age" < $3`, query)
 	require.Equal(t, []any{20, "true", 18}, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("key").
+		From(Table("T1")).
+		Union(
+			Dialect(dialect.YDB).
+				Select("key").
+				From(Table("T2")),
+		).
+		Query()
+	require.Equal(t, "SELECT `key` FROM `T1` UNION SELECT `key` FROM `T2`", query)
+	require.Empty(t, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("id", "name").
+		From(Table("users")).
+		Where(EQ("status", "active")).
+		Union(
+			Dialect(dialect.YDB).
+				Select("id", "name").
+				From(Table("users")).
+				Where(EQ("status", "inactive")),
+		).
+		Query()
+	require.Equal(t, "SELECT `id`, `name` FROM `users` WHERE `status` = $p0 UNION SELECT `id`, `name` FROM `users` WHERE `status` = $p1", query)
+	require.Equal(t, []any{
+		driver.NamedValue{Name: "p0", Value: "active"},
+		driver.NamedValue{Name: "p1", Value: "inactive"},
+	}, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("x").
+		UnionAll(Dialect(dialect.YDB).Select("y")).
+		UnionAll(Dialect(dialect.YDB).Select("z")).
+		Query()
+	require.Equal(t, "SELECT `x` UNION ALL SELECT `y` UNION ALL SELECT `z`", query)
+	require.Empty(t, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("id").
+		From(Table("orders")).
+		Where(EQ("status", "pending")).
+		Union(
+			Dialect(dialect.YDB).
+				Select("id").
+				From(Table("orders")).
+				Where(EQ("status", "processing")),
+		).
+		OrderBy("id").
+		Limit(100).
+		Query()
+	require.Equal(t, "SELECT `id` FROM `orders` WHERE `status` = $p0 UNION SELECT `id` FROM `orders` WHERE `status` = $p1 ORDER BY `id` LIMIT 100", query)
+	require.Equal(t, []any{
+		driver.NamedValue{Name: "p0", Value: "pending"},
+		driver.NamedValue{Name: "p1", Value: "processing"},
+	}, args)
 }
 
 func TestSelector_Except(t *testing.T) {
@@ -2029,6 +2132,111 @@ func TestSelector_Intersect(t *testing.T) {
 		Query()
 	require.Equal(t, `SELECT * FROM "users" WHERE "active" INTERSECT SELECT * FROM "old_users1" WHERE "is_active" AND "age" > $1 INTERSECT ALL SELECT * FROM "old_users2" WHERE "is_active" = $2 AND "age" < $3`, query)
 	require.Equal(t, []any{20, "true", 18}, args)
+}
+
+func TestSelector_AssumeOrderBy_YDB(t *testing.T) {
+	query, args := Dialect(dialect.YDB).
+		Select("*").
+		From(Table("my_table")).
+		AssumeOrderBy("key").
+		Query()
+	require.Equal(t, "SELECT * FROM `my_table` ASSUME ORDER BY `key`", query)
+	require.Empty(t, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("key", "subkey").
+		From(Table("my_table")).
+		AssumeOrderBy("key", Desc("subkey")).
+		Query()
+	require.Equal(t, "SELECT `key`, `subkey` FROM `my_table` ASSUME ORDER BY `key`, `subkey` DESC", query)
+	require.Empty(t, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("*").
+		From(Table("orders")).
+		Where(EQ("status", "active")).
+		AssumeOrderBy("created_at").
+		Query()
+	require.Equal(t, "SELECT * FROM `orders` WHERE `status` = $p0 ASSUME ORDER BY `created_at`", query)
+	require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "active"}}, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("id", "name").
+		From(Table("users")).
+		AssumeOrderBy("id").
+		Limit(10).
+		Query()
+	require.Equal(t, "SELECT `id`, `name` FROM `users` ASSUME ORDER BY `id` LIMIT 10", query)
+	require.Empty(t, args)
+
+	t.Run("OrderBy then AssumeOrderBy should error", func(t *testing.T) {
+		selector := Dialect(dialect.YDB).
+			Select("*").
+			From(Table("users")).
+			OrderBy("id").
+			AssumeOrderBy("id")
+		
+		err := selector.Err()
+		require.Error(t, err)
+	})
+
+	t.Run("AssumeOrderBy then OrderBy should error", func(t *testing.T) {
+		selector := Dialect(dialect.YDB).
+			Select("*").
+			From(Table("users")).
+			AssumeOrderBy("id").
+			OrderBy("id")
+
+		err := selector.Err()
+		require.Error(t, err)
+	})
+
+	t.Run("Non-YDB dialect with AssumeOrderBy should error", func(t *testing.T) {
+		selector := Dialect(dialect.Postgres).
+			Select("*").
+			From(Table("users")).
+			AssumeOrderBy("name")
+		
+		err := selector.Err()
+		require.Error(t, err)
+	})
+}
+
+func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
+	t.Run("Simple SELECT with VIEW in FROM clause", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.Select("series_id", "title", "info", "release_date", "views", "uploaded_user_id").
+			From(d.Table("series").View("views_index")).
+			Where(GTE("views", 1000)).
+			Query()
+		
+		require.Equal(t, "SELECT `series_id`, `title`, `info`, `release_date`, `views`, `uploaded_user_id` FROM `series` VIEW `views_index` WHERE `views` >= $p0", query)
+		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: 1000}}, args)
+	})
+
+	t.Run("JOIN with VIEW on both tables", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		series := d.Table("series").View("users_index").As("t1")
+		users := d.Table("users").View("name_index").As("t2")
+		
+		query, args := d.Select(series.C("series_id"), series.C("title")).
+			From(series).
+			Join(users).
+			On(series.C("uploaded_user_id"), users.C("user_id")).
+			Where(EQ(users.C("name"), "John Doe")).
+			Query()
+		
+		require.Equal(t, "SELECT `t1`.`series_id`, `t1`.`title` FROM `series` VIEW `users_index` AS `t1` JOIN `users` VIEW `name_index` AS `t2` ON `t1`.`uploaded_user_id` = `t2`.`user_id` WHERE `t2`.`name` = $p0", query)
+		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "John Doe"}}, args)
+	})
+
+	t.Run("VIEW on non-YDB dialect should error", func(t *testing.T) {
+		d := Dialect(dialect.Postgres)
+		table := d.Table("users").View("idx_name")
+		
+		err := table.Err()
+		require.Error(t, err)
+	})
 }
 
 func TestSelector_SetOperatorWithRecursive(t *testing.T) {
