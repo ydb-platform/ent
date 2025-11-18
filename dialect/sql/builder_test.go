@@ -1678,6 +1678,52 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 				driver.NamedValue{Name: "p2", Value: "john@example.com"},
 			},
 		},
+		{
+			input: Dialect(dialect.YDB).
+				Update("users").
+				Set("name", "foo").
+				Where(EQ("id", 1)).
+				Returning("*"),
+			wantQuery: "UPDATE `users` SET `name` = $p0 WHERE `id` = $p1 RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "foo"},
+				driver.NamedValue{Name: "p1", Value: 1},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Update("orders").
+				Set("status", "shipped").
+				Where(LT("order_date", "2023-01-01")).
+				Returning("order_id", "status"),
+			wantQuery: "UPDATE `orders` SET `status` = $p0 WHERE `order_date` < $p1 RETURNING `order_id`, `status`",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "shipped"},
+				driver.NamedValue{Name: "p1", Value: "2023-01-01"},
+			},
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				subquery := d.Select("key", "value").
+					From(Table("temp_updates")).
+					Where(EQ("status", "pending"))
+				return d.Update("users").On(subquery)
+			}(),
+			wantQuery: "UPDATE `users` ON SELECT `key`, `value` FROM `temp_updates` WHERE `status` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "pending"}},
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				subquery := d.Select("*").
+					From(Table("staged_data"))
+				return d.Update("users").
+					On(subquery).
+					Returning("id", "name")
+			}(),
+			wantQuery: "UPDATE `users` ON SELECT * FROM `staged_data` RETURNING `id`, `name`",
+		},
 	}
 	for i, tt := range tests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {

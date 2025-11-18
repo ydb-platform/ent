@@ -146,7 +146,7 @@ type InsertBuilder struct {
 	returning []string
 	values    [][]any
 	conflict  *conflict
-	isUpsert    bool // YDB-specific: use UPSERT instead of INSERT
+	isUpsert  bool // YDB-specific: use UPSERT instead of INSERT
 }
 
 // Insert creates a builder for the `INSERT INTO` statement.
@@ -555,6 +555,7 @@ type UpdateBuilder struct {
 	order     []any
 	limit     *int
 	prefix    Queries
+	onSelect  *Selector // YDB-specific: UPDATE ON subquery
 }
 
 // Update creates a builder for the `UPDATE` statement.
@@ -664,6 +665,25 @@ func (u *UpdateBuilder) Returning(columns ...string) *UpdateBuilder {
 	return u
 }
 
+// On sets a subquery for the UPDATE ON statement (YDB-specific).
+// The subquery must return columns that include all primary key columns.
+// For each row in the subquery result, the corresponding row in the table is updated.
+//
+//	Update("users").
+//		On(
+//			Select("key", "name")
+//				.From(Table("temp_updates"))
+//				.Where(EQ("status", "pending"))
+//		)
+func (u *UpdateBuilder) On(s *Selector) *UpdateBuilder {
+	if u.ydb() {
+		u.onSelect = s
+	} else {
+		u.AddError(fmt.Errorf("UPDATE ON: unsupported dialect: %q", u.dialect))
+	}
+	return u
+}
+
 // Query returns query representation of an `UPDATE` statement.
 func (u *UpdateBuilder) Query() (string, []any) {
 	b := u.Builder.clone()
@@ -673,7 +693,18 @@ func (u *UpdateBuilder) Query() (string, []any) {
 	}
 	b.WriteString("UPDATE ")
 	b.writeSchema(u.schema)
-	b.Ident(u.table).WriteString(" SET ")
+	b.Ident(u.table)
+
+	// UPDATE ON pattern (YDB-specific)
+	if u.onSelect != nil {
+		b.WriteString(" ON ")
+		b.Join(u.onSelect)
+		joinReturning(u.returning, &b)
+		return b.String(), b.args
+	}
+
+	// Standard UPDATE SET pattern
+	b.WriteString(" SET ")
 	u.writeSetter(&b)
 	if u.where != nil {
 		b.WriteString(" WHERE ")
@@ -774,7 +805,7 @@ func (d *DeleteBuilder) On(s *Selector) *DeleteBuilder {
 	if d.ydb() {
 		d.onSelect = s
 	} else {
-		d.AddError(fmt.Errorf("On: unsupported dialect: %q", d.dialect))
+		d.AddError(fmt.Errorf("DELETE ON: unsupported dialect: %q", d.dialect))
 	}
 	return d
 }
@@ -785,7 +816,7 @@ func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
 	if d.ydb() {
 		d.returning = columns
 	} else {
-		d.AddError(fmt.Errorf("Returning: unsupported dialect: %q", d.dialect))
+		d.AddError(fmt.Errorf("DELETE RETURNING: unsupported dialect: %q", d.dialect))
 	}
 	return d
 }
