@@ -1678,6 +1678,7 @@ type SelectTable struct {
 	name   string
 	schema string
 	quote  bool
+	index  string // YDB-specific: secondary index name for VIEW clause
 }
 
 // Table returns a new table selector.
@@ -1697,6 +1698,20 @@ func (s *SelectTable) Schema(name string) *SelectTable {
 // As adds the AS clause to the table selector.
 func (s *SelectTable) As(alias string) *SelectTable {
 	s.as = alias
+	return s
+}
+
+// View sets the secondary index name for the VIEW clause (YDB-specific).
+// This allows explicit use of secondary indexes in JOIN operations.
+//
+//	t := Table("users").View("idx_email").As("u")
+//	Select().From(Table("orders")).Join(t).On(...)
+func (s *SelectTable) View(index string) *SelectTable {
+	if s.ydb() {
+		s.index = index
+	} else {
+		s.AddError(fmt.Errorf("JOIN VIEW: unsupported dialect: %q", s.dialect))
+	}
 	return s
 }
 
@@ -1739,6 +1754,13 @@ func (s *SelectTable) ref() string {
 	b := &Builder{dialect: s.dialect}
 	b.writeSchema(s.schema)
 	b.Ident(s.name)
+
+	// YDB-specific: VIEW clause for secondary indexes
+	if s.index != "" {
+		b.WriteString(" VIEW ")
+		b.Ident(s.index)
+	}
+
 	if s.as != "" {
 		b.WriteString(" AS ")
 		b.Ident(s.as)
@@ -2200,6 +2222,36 @@ func (s *Selector) RightJoin(t TableView) *Selector {
 // FullJoin appends a `FULL JOIN` clause to the statement.
 func (s *Selector) FullJoin(t TableView) *Selector {
 	return s.join("FULL JOIN", t)
+}
+
+// LeftSemiJoin appends a `LEFT SEMI JOIN` clause to the statement (YDB-specific).
+func (s *Selector) LeftSemiJoin(t TableView) *Selector {
+	return s.join("LEFT SEMI JOIN", t)
+}
+
+// RightSemiJoin appends a `RIGHT SEMI JOIN` clause to the statement (YDB-specific).
+func (s *Selector) RightSemiJoin(t TableView) *Selector {
+	return s.join("RIGHT SEMI JOIN", t)
+}
+
+// LeftOnlyJoin appends a `LEFT ONLY JOIN` clause to the statement (YDB-specific).
+func (s *Selector) LeftOnlyJoin(t TableView) *Selector {
+	return s.join("LEFT ONLY JOIN", t)
+}
+
+// RightOnlyJoin appends a `RIGHT ONLY JOIN` clause to the statement (YDB-specific).
+func (s *Selector) RightOnlyJoin(t TableView) *Selector {
+	return s.join("RIGHT ONLY JOIN", t)
+}
+
+// CrossJoin appends a `CROSS JOIN` clause to the statement.
+func (s *Selector) CrossJoin(t TableView) *Selector {
+	return s.join("CROSS JOIN", t)
+}
+
+// ExclusionJoin appends an `EXCLUSION JOIN` clause to the statement (YDB-specific).
+func (s *Selector) ExclusionJoin(t TableView) *Selector {
+	return s.join("EXCLUSION JOIN", t)
 }
 
 // join adds a join table to the selector with the given kind.

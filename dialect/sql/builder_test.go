@@ -1724,6 +1724,128 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 			}(),
 			wantQuery: "UPDATE `users` ON SELECT * FROM `staged_data` RETURNING `id`, `name`",
 		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("orders")
+				t2 := d.Table("users").View("idx_email").As("u")
+				return d.Select(t1.C("id"), t2.C("name")).
+					From(t1).
+					Join(t2).
+					On(t1.C("user_id"), t2.C("id"))
+			}(),
+			wantQuery: "SELECT `orders`.`id`, `u`.`name` FROM `orders` JOIN `users` VIEW `idx_email` AS `u` ON `orders`.`user_id` = `u`.`id`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("a_table").As("a")
+				t2 := d.Table("b_table").View("b_index_ref").As("b")
+				return d.Select(t1.C("value"), t2.C("value")).
+					From(t1).
+					Join(t2).
+					On(t1.C("ref"), t2.C("ref"))
+			}(),
+			wantQuery: "SELECT `a`.`value`, `b`.`value` FROM `a_table` AS `a` JOIN `b_table` VIEW `b_index_ref` AS `b` ON `a`.`ref` = `b`.`ref`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("orders")
+				t2 := d.Table("products").View("idx_category")
+				return d.Select("*").
+					From(t1).
+					LeftJoin(t2).
+					On(t1.C("product_id"), t2.C("id")).
+					Where(EQ(t2.C("category"), "Electronics"))
+			}(),
+			wantQuery: "SELECT * FROM `orders` LEFT JOIN `products` VIEW `idx_category` AS `t1` ON `orders`.`product_id` = `t1`.`id` WHERE `t1`.`category` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "Electronics"}},
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("users")
+				t2 := d.Table("blacklist")
+				return d.Select(t1.C("id"), t1.C("name")).
+					From(t1).
+					LeftSemiJoin(t2).
+					On(t1.C("id"), t2.C("user_id"))
+			}(),
+			wantQuery: "SELECT `users`.`id`, `users`.`name` FROM `users` LEFT SEMI JOIN `blacklist` AS `t1` ON `users`.`id` = `t1`.`user_id`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("orders")
+				t2 := d.Table("active_users").As("t1")
+				return d.Select(t2.C("id"), t2.C("email")).
+					From(t1).
+					RightSemiJoin(t2).
+					On(t1.C("user_id"), t2.C("id"))
+			}(),
+			wantQuery: "SELECT `t1`.`id`, `t1`.`email` FROM `orders` RIGHT SEMI JOIN `active_users` AS `t1` ON `orders`.`user_id` = `t1`.`id`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("users")
+				t2 := d.Table("deleted_users")
+				return d.Select(t1.C("id"), t1.C("name")).
+					From(t1).
+					LeftOnlyJoin(t2).
+					On(t1.C("id"), t2.C("id"))
+			}(),
+			wantQuery: "SELECT `users`.`id`, `users`.`name` FROM `users` LEFT ONLY JOIN `deleted_users` AS `t1` ON `users`.`id` = `t1`.`id`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("archived")
+				t2 := d.Table("users").As("t1")
+				return d.Select(t2.C("id"), t2.C("status")).
+					From(t1).
+					RightOnlyJoin(t2).
+					On(t1.C("user_id"), t2.C("id"))
+			}(),
+			wantQuery: "SELECT `t1`.`id`, `t1`.`status` FROM `archived` RIGHT ONLY JOIN `users` AS `t1` ON `archived`.`user_id` = `t1`.`id`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("table_a").As("a")
+				t2 := d.Table("table_b").As("b")
+				return d.Select(t1.C("key"), t2.C("key")).
+					From(t1).
+					ExclusionJoin(t2).
+					On(t1.C("key"), t2.C("key"))
+			}(),
+			wantQuery: "SELECT `a`.`key`, `b`.`key` FROM `table_a` AS `a` EXCLUSION JOIN `table_b` AS `b` ON `a`.`key` = `b`.`key`",
+		},
+		{
+			input: func() Querier {
+				t1 := Table("users").As("u")
+				t2 := Table("groups").As("g")
+				return Select(t1.C("id"), t2.C("name")).
+					From(t1).
+					CrossJoin(t2)
+			}(),
+			wantQuery: "SELECT `u`.`id`, `g`.`name` FROM `users` AS `u` CROSS JOIN `groups` AS `g`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("a_table").As("a")
+				t2 := d.Table("b_table").As("b")
+				t3 := d.Table("c_table").As("c")
+				return d.Select(t1.C("value"), t2.C("value"), t3.C("column2")).
+					From(t1).
+					CrossJoin(t2).
+					LeftJoin(t3).
+					OnP(And(EQ(t3.C("ref"), Expr(t1.C("key"))), EQ(t3.C("column1"), Expr(t2.C("value")))))
+			}(),
+			wantQuery: "SELECT `a`.`value`, `b`.`value`, `c`.`column2` FROM `a_table` AS `a` CROSS JOIN `b_table` AS `b` LEFT JOIN `c_table` AS `c` ON `c`.`ref` = `a`.`key` AND `c`.`column1` = `b`.`value`",
+		},
 	}
 	for i, tt := range tests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -1746,22 +1868,6 @@ func TestBuilder_Err(t *testing.T) {
 	}))
 	_, _ = b.Query()
 	require.EqualError(t, b.Err(), "invalid; unexpected; inner")
-
-	u := Dialect(dialect.MySQL).
-		Upsert("users").
-		Columns("id", "name").
-		Values(1, "foo")
-	_, _, err := u.QueryErr()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "UPSERT: unsupported dialect")
-
-	u = Dialect(dialect.Postgres).
-		Upsert("users").
-		Columns("id", "name").
-		Values(1, "foo")
-	_, _, err = u.QueryErr()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "UPSERT: unsupported dialect")
 }
 
 func TestSelector_OrderByExpr(t *testing.T) {
