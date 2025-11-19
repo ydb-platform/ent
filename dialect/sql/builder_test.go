@@ -2336,6 +2336,34 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 	})
 }
 
+func TestCreateView_YDB(t *testing.T) {
+	t.Run("Basic view with security_invoker", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.CreateView("recent_series").
+			As(
+				d.Select("*").
+					From(Table("db")).
+					Where(GT("release_date", "2020-01-01")),
+			).
+			Query()
+
+		require.Contains(t, query, "CREATE VIEW `recent_series` WITH (security_invoker = TRUE) AS SELECT * FROM `db`")
+		require.Contains(t, query, "WHERE `release_date` > $p0")
+		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "2020-01-01"}}, args)
+	})
+
+	t.Run("Non-YDB dialect should not generate WITH clause", func(t *testing.T) {
+		query, _ := Dialect(dialect.Postgres).
+			CreateView("my_view").
+			As(Select("*").From(Table("users"))).
+			Query()
+
+		// Postgres should not have the WITH clause
+		require.NotContains(t, query, "WITH (security_invoker")
+		require.Contains(t, query, `CREATE VIEW "my_view" AS SELECT * FROM "users"`)
+	})
+}
+
 func TestSelector_SetOperatorWithRecursive(t *testing.T) {
 	t1, t2, t3 := Table("files"), Table("files"), Table("path")
 	n := Queries{
