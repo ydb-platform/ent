@@ -2175,7 +2175,7 @@ func TestSelector_AssumeOrderBy_YDB(t *testing.T) {
 			From(Table("users")).
 			OrderBy("id").
 			AssumeOrderBy("id")
-		
+
 		err := selector.Err()
 		require.Error(t, err)
 	})
@@ -2196,7 +2196,7 @@ func TestSelector_AssumeOrderBy_YDB(t *testing.T) {
 			Select("*").
 			From(Table("users")).
 			AssumeOrderBy("name")
-		
+
 		err := selector.Err()
 		require.Error(t, err)
 	})
@@ -2209,7 +2209,7 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 			From(d.Table("series").View("views_index")).
 			Where(GTE("views", 1000)).
 			Query()
-		
+
 		require.Equal(t, "SELECT `series_id`, `title`, `info`, `release_date`, `views`, `uploaded_user_id` FROM `series` VIEW `views_index` WHERE `views` >= $p0", query)
 		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: 1000}}, args)
 	})
@@ -2218,14 +2218,14 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 		d := Dialect(dialect.YDB)
 		series := d.Table("series").View("users_index").As("t1")
 		users := d.Table("users").View("name_index").As("t2")
-		
+
 		query, args := d.Select(series.C("series_id"), series.C("title")).
 			From(series).
 			Join(users).
 			On(series.C("uploaded_user_id"), users.C("user_id")).
 			Where(EQ(users.C("name"), "John Doe")).
 			Query()
-		
+
 		require.Equal(t, "SELECT `t1`.`series_id`, `t1`.`title` FROM `series` VIEW `users_index` AS `t1` JOIN `users` VIEW `name_index` AS `t2` ON `t1`.`uploaded_user_id` = `t2`.`user_id` WHERE `t2`.`name` = $p0", query)
 		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "John Doe"}}, args)
 	})
@@ -2233,9 +2233,37 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 	t.Run("VIEW on non-YDB dialect should error", func(t *testing.T) {
 		d := Dialect(dialect.Postgres)
 		table := d.Table("users").View("idx_name")
-		
+
 		err := table.Err()
 		require.Error(t, err)
+	})
+}
+
+func TestCreateView_YDB(t *testing.T) {
+	t.Run("Basic view with security_invoker", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.CreateView("recent_series").
+			As(
+				d.Select("*").
+					From(Table("db")).
+					Where(GT("release_date", "2020-01-01")),
+			).
+			Query()
+
+		require.Contains(t, query, "CREATE VIEW `recent_series` WITH (security_invoker = TRUE) AS SELECT * FROM `db`")
+		require.Contains(t, query, "WHERE `release_date` > $p0")
+		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "2020-01-01"}}, args)
+	})
+
+	t.Run("Non-YDB dialect should not generate WITH clause", func(t *testing.T) {
+		query, _ := Dialect(dialect.Postgres).
+			CreateView("my_view").
+			As(Select("*").From(Table("users"))).
+			Query()
+
+		// Postgres should not have the WITH clause
+		require.NotContains(t, query, "WITH (security_invoker")
+		require.Contains(t, query, `CREATE VIEW "my_view" AS SELECT * FROM "users"`)
 	})
 }
 
