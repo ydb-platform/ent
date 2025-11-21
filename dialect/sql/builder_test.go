@@ -2280,6 +2280,79 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 	})
 }
 
+func TestBatchUpdate_YDB(t *testing.T) {
+	t.Run("Basic BATCH UPDATE with SET and WHERE", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.BatchUpdate("my_table").
+			Set("Value1", "foo").
+			Set("Value2", 0).
+			Where(GT("Key1", 1)).
+			Query()
+		
+		require.Equal(t, "BATCH UPDATE `my_table` SET `Value1` = $p0, `Value2` = $p1 WHERE `Key1` > $p2", query)
+		require.Equal(t, []any{
+			driver.NamedValue{Name: "p0", Value: "foo"},
+			driver.NamedValue{Name: "p1", Value: 0},
+			driver.NamedValue{Name: "p2", Value: 1},
+		}, args)
+	})
+
+	t.Run("BATCH UPDATE without WHERE clause", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.BatchUpdate("users").
+			Set("status", "active").
+			Query()
+		
+		require.Equal(t, "BATCH UPDATE `users` SET `status` = $p0", query)
+		require.Equal(t, []any{
+			driver.NamedValue{Name: "p0", Value: "active"},
+		}, args)
+	})
+
+	t.Run("BATCH UPDATE with multiple SET clauses", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.BatchUpdate("products").
+			Set("price", 100).
+			Set("stock", 50).
+			Set("updated_at", "2024-01-01").
+			Where(EQ("category", "electronics")).
+			Query()
+		
+		require.Contains(t, query, "BATCH UPDATE `products` SET")
+		require.Contains(t, query, "`price` = $p0")
+		require.Contains(t, query, "`stock` = $p1")
+		require.Contains(t, query, "`updated_at` = $p2")
+		require.Contains(t, query, "WHERE `category` = $p3")
+		require.Len(t, args, 4)
+	})
+
+	t.Run("BATCH UPDATE on non-YDB dialect should error", func(t *testing.T) {
+		builder := Dialect(dialect.MySQL).
+			BatchUpdate("users").
+			Set("status", "active").
+			Where(GT("created_at", "2024-01-01"))
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+	})
+
+	t.Run("BATCH UPDATE with RETURNING should error", func(t *testing.T) {
+		builder := Dialect(dialect.YDB).
+			BatchUpdate("users").
+			Set("status", "active").
+			Returning("id", "status")
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+	})
+}
+
 func TestCreateView_YDB(t *testing.T) {
 	t.Run("Basic view with security_invoker", func(t *testing.T) {
 		d := Dialect(dialect.YDB)
