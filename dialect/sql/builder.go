@@ -477,19 +477,20 @@ func (i *InsertBuilder) Query() (string, []any) {
 func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	b := i.Builder.clone()
 
-	if i.isUpsert {
+	switch {
+	case i.isUpsert:
 		if !b.ydb() {
 			b.AddError(fmt.Errorf("UPSERT INTO: unsupported dialect: %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		b.WriteString("UPSERT INTO ")
-	} else if i.isReplace {
+	case i.isReplace:
 		if !b.ydb() {
 			b.AddError(fmt.Errorf("REPLACE INTO: unsupported dialect: %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		b.WriteString("REPLACE INTO ")
-	} else {
+	default:
 		b.WriteString("INSERT INTO ")
 	}
 
