@@ -73,6 +73,11 @@ func TestBuilder(t *testing.T) {
 			wantArgs:  []any{1},
 		},
 		{
+			input:     Dialect(dialect.YDB).Insert("users").Columns("age").Values(1),
+			wantQuery: "INSERT INTO `users` (`age`) VALUES ($p0)",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: 1}},
+		},
+		{
 			input:     Dialect(dialect.Postgres).Insert("users").Columns("age").Values(1).Returning("id"),
 			wantQuery: `INSERT INTO "users" ("age") VALUES ($1) RETURNING "id"`,
 			wantArgs:  []any{1},
@@ -145,6 +150,11 @@ func TestBuilder(t *testing.T) {
 			input:     Dialect(dialect.SQLite).Update("users").Set("name", "foo").Schema("mydb"),
 			wantQuery: "UPDATE `users` SET `name` = ?",
 			wantArgs:  []any{"foo"},
+		},
+		{
+			input:     Dialect(dialect.YDB).Update("users").Set("name", "foo"),
+			wantQuery: "UPDATE `users` SET `name` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "foo"}},
 		},
 		{
 			input:     Update("users").Set("name", "foo").Set("age", 10),
@@ -484,6 +494,14 @@ func TestBuilder(t *testing.T) {
 			wantArgs:  []any{"Ariel"},
 		},
 		{
+			input: Dialect(dialect.YDB).
+				Select().
+				From(Table("users")).
+				Where(EQ("name", "Alex")),
+			wantQuery: "SELECT * FROM `users` WHERE `name` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "Alex"}},
+		},
+		{
 			input: Select().
 				From(Table("users")).
 				Where(Or(EQ("name", "BAR"), EQ("name", "BAZ"))),
@@ -531,6 +549,12 @@ func TestBuilder(t *testing.T) {
 				Delete("users").
 				Where(NotNull("parent_id")).
 				Schema("mydb"),
+			wantQuery: "DELETE FROM `users` WHERE `parent_id` IS NOT NULL",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(NotNull("parent_id")),
 			wantQuery: "DELETE FROM `users` WHERE `parent_id` IS NOT NULL",
 		},
 		{
@@ -711,6 +735,18 @@ func TestBuilder(t *testing.T) {
 					On(t1.C("id"), t2.C("user_id"))
 			}(),
 			wantQuery: `SELECT "u"."id", "g"."name" FROM "users" AS "u" JOIN "groups" AS "g" ON "u"."id" = "g"."user_id"`,
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("users").As("u")
+				t2 := d.Table("groups").As("g")
+				return d.Select(t1.C("id"), t2.C("name")).
+					From(t1).
+					Join(t2).
+					On(t1.C("id"), t2.C("user_id"))
+			}(),
+			wantQuery: "SELECT `u`.`id`, `g`.`name` FROM `users` AS `u` JOIN `groups` AS `g` ON `u`.`id` = `g`.`user_id`",
 		},
 		{
 			input: func() Querier {
@@ -1093,6 +1129,11 @@ func TestBuilder(t *testing.T) {
 			wantQuery: `SELECT COUNT(*) FROM "users"`,
 		},
 		{
+			input: Dialect(dialect.YDB).
+				Select().Count().From(Table("users")),
+			wantQuery: "SELECT COUNT(*) FROM `users`",
+		},
+		{
 			input:     Select().Count(Distinct("id")).From(Table("users")),
 			wantQuery: "SELECT COUNT(DISTINCT `id`) FROM `users`",
 		},
@@ -1160,6 +1201,13 @@ func TestBuilder(t *testing.T) {
 			wantQuery: `SELECT "name", COUNT(*) FROM "users" GROUP BY "name"`,
 		},
 		{
+			input: Dialect(dialect.YDB).
+				Select("name", Count("*")).
+				From(Table("users")).
+				GroupBy("name"),
+			wantQuery: "SELECT `name`, COUNT(*) FROM `users` GROUP BY `name`",
+		},
+		{
 			input: Select("name", Count("*")).
 				From(Table("users")).
 				GroupBy("name").
@@ -1201,6 +1249,14 @@ func TestBuilder(t *testing.T) {
 				From(Table("users")).
 				Limit(1),
 			wantQuery: `SELECT * FROM "users" LIMIT 1`,
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("*").
+				From(Table("users")).
+				OrderBy("id").
+				Limit(10),
+			wantQuery: "SELECT * FROM `users` ORDER BY `id` LIMIT 10",
 		},
 		{
 			input:     Select("age").Distinct().From(Table("users")),
@@ -2175,7 +2231,7 @@ func TestSelector_AssumeOrderBy_YDB(t *testing.T) {
 			From(Table("users")).
 			OrderBy("id").
 			AssumeOrderBy("id")
-		
+
 		err := selector.Err()
 		require.Error(t, err)
 	})
@@ -2196,7 +2252,7 @@ func TestSelector_AssumeOrderBy_YDB(t *testing.T) {
 			Select("*").
 			From(Table("users")).
 			AssumeOrderBy("name")
-		
+
 		err := selector.Err()
 		require.Error(t, err)
 	})
@@ -2209,7 +2265,7 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 			From(d.Table("series").View("views_index")).
 			Where(GTE("views", 1000)).
 			Query()
-		
+
 		require.Equal(t, "SELECT `series_id`, `title`, `info`, `release_date`, `views`, `uploaded_user_id` FROM `series` VIEW `views_index` WHERE `views` >= $p0", query)
 		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: 1000}}, args)
 	})
@@ -2218,14 +2274,14 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 		d := Dialect(dialect.YDB)
 		series := d.Table("series").View("users_index").As("t1")
 		users := d.Table("users").View("name_index").As("t2")
-		
+
 		query, args := d.Select(series.C("series_id"), series.C("title")).
 			From(series).
 			Join(users).
 			On(series.C("uploaded_user_id"), users.C("user_id")).
 			Where(EQ(users.C("name"), "John Doe")).
 			Query()
-		
+
 		require.Equal(t, "SELECT `t1`.`series_id`, `t1`.`title` FROM `series` VIEW `users_index` AS `t1` JOIN `users` VIEW `name_index` AS `t2` ON `t1`.`uploaded_user_id` = `t2`.`user_id` WHERE `t2`.`name` = $p0", query)
 		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "John Doe"}}, args)
 	})
@@ -2233,7 +2289,7 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 	t.Run("VIEW on non-YDB dialect should error", func(t *testing.T) {
 		d := Dialect(dialect.Postgres)
 		table := d.Table("users").View("idx_name")
-		
+
 		err := table.Err()
 		require.Error(t, err)
 	})
