@@ -152,7 +152,10 @@ type InsertBuilder struct {
 	returning []string
 	values    [][]any
 	conflict  *conflict
-	isUpsert  bool // YDB-specific: use UPSERT instead of INSERT
+
+	// YDB-specific:
+	isUpsert  bool // use UPSERT instead of INSERT
+	isReplace bool // use REPLACE instead of INSERT
 }
 
 // Insert creates a builder for the `INSERT INTO` statement.
@@ -178,6 +181,21 @@ func Insert(table string) *InsertBuilder { return &InsertBuilder{table: table} }
 // Note: UPSERT is only supported in YDB dialect.
 func Upsert(table string) *InsertBuilder {
 	return &InsertBuilder{table: table, isUpsert: true}
+}
+
+// Replace creates a builder for the `REPLACE INTO` statement.
+// REPLACE overwrites entire rows based on primary key comparison.
+// For existing rows, the entire row is replaced (unspecified columns get default values).
+// For missing rows, new rows are inserted.
+//
+//	Replace("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10).
+//		Values(2, "foo", 20)
+//
+// Note: REPLACE is only supported in YDB dialect.
+func Replace(table string) *InsertBuilder {
+	return &InsertBuilder{table: table, isReplace: true}
 }
 
 // Schema sets the database name for the insert table.
@@ -460,17 +478,23 @@ func (i *InsertBuilder) Query() (string, []any) {
 	return query, args
 }
 
-// QueryErr returns query representation of an `INSERT INTO` or `UPSERT INTO`
-// statement and any error occurred in building the statement.
+// QueryErr returns query representation of an `INSERT INTO`, `UPSERT INTO`,
+// or `REPLACE INTO` statement and any error occurred in building the statement.
 func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	b := i.Builder.clone()
 
 	if i.isUpsert {
 		if !b.ydb() {
-			b.AddError(fmt.Errorf("UPSERT: unsupported dialect: %q", b.dialect))
+			b.AddError(fmt.Errorf("UPSERT INTO: unsupported dialect: %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		b.WriteString("UPSERT INTO ")
+	} else if i.isReplace {
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("REPLACE INTO: unsupported dialect: %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		b.WriteString("REPLACE INTO ")
 	} else {
 		b.WriteString("INSERT INTO ")
 	}
@@ -3659,6 +3683,19 @@ func (d *DialectBuilder) Insert(table string) *InsertBuilder {
 //		Values(1, "a8m", 10)
 func (d *DialectBuilder) Upsert(table string) *InsertBuilder {
 	b := Upsert(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
+// Replace creates an InsertBuilder for the REPLACE statement with the configured dialect.
+// REPLACE is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		Replace("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10)
+func (d *DialectBuilder) Replace(table string) *InsertBuilder {
+	b := Replace(table)
 	b.SetDialect(d.dialect)
 	return b
 }
