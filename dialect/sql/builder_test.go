@@ -2344,7 +2344,7 @@ func TestBatchUpdate_YDB(t *testing.T) {
 			Set("Value2", 0).
 			Where(GT("Key1", 1)).
 			Query()
-		
+
 		require.Equal(t, "BATCH UPDATE `my_table` SET `Value1` = $p0, `Value2` = $p1 WHERE `Key1` > $p2", query)
 		require.Equal(t, []any{
 			driver.NamedValue{Name: "p0", Value: "foo"},
@@ -2358,9 +2358,9 @@ func TestBatchUpdate_YDB(t *testing.T) {
 			BatchUpdate("users").
 			Set("status", "active").
 			Where(GT("created_at", "2024-01-01"))
-		
+
 		query, args, err := builder.QueryErr()
-		
+
 		require.Empty(t, query)
 		require.Empty(t, args)
 		require.Error(t, err)
@@ -2371,9 +2371,9 @@ func TestBatchUpdate_YDB(t *testing.T) {
 			BatchUpdate("users").
 			Set("status", "active").
 			Returning("id", "status")
-		
+
 		query, args, err := builder.QueryErr()
-		
+
 		require.Empty(t, query)
 		require.Empty(t, args)
 		require.Error(t, err)
@@ -2382,13 +2382,13 @@ func TestBatchUpdate_YDB(t *testing.T) {
 	t.Run("BATCH UPDATE with UPDATE ON pattern should error", func(t *testing.T) {
 		d := Dialect(dialect.YDB)
 		subquery := d.Select("id").From(Table("orders")).Where(EQ("status", "pending"))
-		
+
 		builder := d.BatchUpdate("users").
 			Set("status", "active").
 			On(subquery)
-		
+
 		query, args, err := builder.QueryErr()
-		
+
 		require.Empty(t, query)
 		require.Empty(t, args)
 		require.Error(t, err)
@@ -2402,7 +2402,7 @@ func TestBatchDelete_YDB(t *testing.T) {
 		query, args := d.BatchDelete("my_table").
 			Where(And(GT("Key1", 1), GTE("Key2", "One"))).
 			Query()
-		
+
 		require.Equal(t, "BATCH DELETE FROM `my_table` WHERE `Key1` > $p0 AND `Key2` >= $p1", query)
 		require.Equal(t, []any{
 			driver.NamedValue{Name: "p0", Value: 1},
@@ -2414,9 +2414,9 @@ func TestBatchDelete_YDB(t *testing.T) {
 		builder := Dialect(dialect.MySQL).
 			BatchDelete("users").
 			Where(GT("id", 100))
-		
+
 		query, args, err := builder.QueryErr()
-		
+
 		require.Empty(t, query)
 		require.Empty(t, args)
 		require.Error(t, err)
@@ -2427,9 +2427,9 @@ func TestBatchDelete_YDB(t *testing.T) {
 			BatchDelete("users").
 			Where(GT("id", 100)).
 			Returning("id")
-		
+
 		query, args, err := builder.QueryErr()
-		
+
 		require.Empty(t, query)
 		require.Empty(t, args)
 		require.Error(t, err)
@@ -2438,12 +2438,12 @@ func TestBatchDelete_YDB(t *testing.T) {
 	t.Run("BATCH DELETE with DELETE ON pattern should error", func(t *testing.T) {
 		d := Dialect(dialect.YDB)
 		subquery := d.Select("id").From(Table("users")).Where(EQ("status", "deleted"))
-		
+
 		builder := d.BatchDelete("users").
 			On(subquery)
-		
+
 		query, args, err := builder.QueryErr()
-		
+
 		require.Empty(t, query)
 		require.Empty(t, args)
 		require.Error(t, err)
@@ -2930,6 +2930,172 @@ func TestWindowFunction_Select(t *testing.T) {
 	query, args := q.Query()
 	require.Equal(t, "SELECT *, (SUM(`posts`.`duration`) OVER (PARTITION BY `author_id` ORDER BY `id`)) AS `duration` FROM `posts`", query)
 	require.Nil(t, args)
+}
+
+func TestWindowBuilder_YDB(t *testing.T) {
+	t.Run("Basic window with PARTITION COMPACT BY", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.Select().
+			AppendSelectExprAs(
+				Window(func(b *Builder) { b.WriteString("AVG(value)") }).
+					PartitionCompactBy("user_id").
+					OrderBy("created_at"),
+				"avg_value",
+			).
+			From(Table("events")).
+			Query()
+
+		require.Contains(t, query, "AVG(value) OVER (PARTITION COMPACT BY `user_id` ORDER BY `created_at`)")
+		require.Empty(t, args)
+	})
+
+	t.Run("Window with frame ROWS BETWEEN", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, _ := d.Select().
+			AppendSelectExprAs(
+				Window(func(b *Builder) { b.WriteString("AVG(price)") }).
+					PartitionBy("category").
+					OrderBy("date").
+					Frame(RowsFrame().Between(Preceding(3), Following(3))),
+				"moving_avg",
+			).
+			From(Table("products")).
+			Query()
+
+		require.Contains(t, query, "AVG(price) OVER (PARTITION BY `category` ORDER BY `date` ROWS BETWEEN 3 PRECEDING AND 3 FOLLOWING)")
+	})
+
+	t.Run("Window with frame ROWS UNBOUNDED PRECEDING", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, _ := d.Select().
+			AppendSelectExprAs(
+				Window(func(b *Builder) { b.WriteString("SUM(amount)") }).
+					PartitionBy("account").
+					OrderBy("timestamp").
+					Frame(RowsFrame().Between(UnboundedPreceding(), CurrentRow())),
+				"cumulative_sum",
+			).
+			From(Table("transactions")).
+			Query()
+
+		require.Contains(t, query, "SUM(amount) OVER (PARTITION BY `account` ORDER BY `timestamp` ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)")
+	})
+
+	t.Run("Named windows in WINDOW clause", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+
+		w1 := Window(func(b *Builder) { b.WriteString("ROW_NUMBER()") }).
+			PartitionBy("department").
+			OrderBy("salary")
+
+		query, _ := d.Select("id", "name").
+			From(Table("employees")).
+			Window("w1", w1).
+			Query()
+
+		require.Contains(t, query, "SELECT `id`, `name` FROM `employees` WINDOW `w1` AS (PARTITION BY `department` ORDER BY `salary`)")
+	})
+
+	t.Run("Named window with COMPACT hint", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+
+		w := Window(func(b *Builder) { b.WriteString("AVG(salary)") }).
+			PartitionCompactBy("department").
+			OrderBy("hire_date")
+
+		query, _ := d.Select("*").
+			From(Table("employees")).
+			Window("avg_window", w).
+			Query()
+
+		require.Contains(t, query, "WINDOW `avg_window` AS (PARTITION COMPACT BY `department` ORDER BY `hire_date`)")
+	})
+
+	t.Run("Multiple named windows", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+
+		w1 := Window(func(b *Builder) { b.WriteString("ROW_NUMBER()") }).
+			PartitionBy("department").
+			OrderBy("salary")
+
+		w2 := Window(func(b *Builder) { b.WriteString("RANK()") }).
+			PartitionBy("office").
+			OrderBy("performance")
+
+		query, _ := d.Select("*").
+			From(Table("employees")).
+			Window("w1", w1).
+			Window("w2", w2).
+			Query()
+
+		require.Contains(t, query, "WINDOW")
+		require.Contains(t, query, "`w1` AS (PARTITION BY `department` ORDER BY `salary`)")
+		require.Contains(t, query, "`w2` AS (PARTITION BY `office` ORDER BY `performance`)")
+	})
+
+	t.Run("Window with frame from boundary", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, _ := d.Select().
+			AppendSelectExprAs(
+				Window(func(b *Builder) { b.WriteString("SUM(value)") }).
+					PartitionBy("group").
+					OrderBy("seq").
+					Frame(RowsFrame().From(UnboundedPreceding())),
+				"running_total",
+			).
+			From(Table("data")).
+			Query()
+
+		require.Contains(t, query, "SUM(value) OVER (PARTITION BY `group` ORDER BY `seq` ROWS UNBOUNDED PRECEDING)")
+	})
+
+	t.Run("Named window reference with WINDOW clause", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+
+		// Define named window
+		w := Window(func(b *Builder) {}).
+			PartitionBy("partition_key_column").
+			OrderBy("int_column").
+			Frame(RowsFrame().Between(Preceding(1), Following(1)))
+
+		query, _ := d.Select().
+			AppendSelectExprAs(
+				WindowNamed(func(b *Builder) { b.WriteString("AVG(some_value)") }, "w"),
+				"avg_of_prev_current_next",
+			).
+			AppendSelect("some_other_value").
+			From(Table("my_table")).
+			Window("w", w).
+			Query()
+
+		require.Contains(t, query, "SELECT AVG(some_value) OVER `w` AS `avg_of_prev_current_next`, `some_other_value` FROM `my_table`")
+		require.Contains(t, query, "WINDOW `w` AS (PARTITION BY `partition_key_column` ORDER BY `int_column` ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING)")
+	})
+
+	t.Run("Multiple window functions with same named window", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+
+		w := Window(func(b *Builder) {}).
+			PartitionBy("dept").
+			OrderBy("salary")
+
+		query, _ := d.Select().
+			AppendSelectExprAs(
+				WindowNamed(func(b *Builder) { b.WriteString("ROW_NUMBER()") }, "w"),
+				"row_num",
+			).
+			AppendSelectExprAs(
+				WindowNamed(func(b *Builder) { b.WriteString("RANK()") }, "w"),
+				"rank",
+			).
+			From(Table("employees")).
+			Window("w", w).
+			Query()
+
+		require.Contains(t, query, "ROW_NUMBER() OVER `w`")
+		require.Contains(t, query, "RANK() OVER `w`")
+		require.Contains(t, query, "WINDOW `w` AS (PARTITION BY `dept` ORDER BY `salary`)")
+	})
 }
 
 func TestSelector_UnqualifiedColumns(t *testing.T) {

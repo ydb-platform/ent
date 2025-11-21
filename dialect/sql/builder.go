@@ -16,6 +16,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -1916,6 +1917,7 @@ type Selector struct {
 	setOps      []setOp
 	prefix      Queries
 	lock        *LockOptions
+	windows     map[string]*WindowBuilder // Named windows for WINDOW clause
 }
 
 // New returns a new Selector with the same dialect and context.
@@ -2648,6 +2650,8 @@ func (s *Selector) Clone() *Selector {
 	for i := range s.joins {
 		joins[i] = s.joins[i].clone()
 	}
+	windows := make(map[string]*WindowBuilder)
+	maps.Copy(windows, s.windows)
 	return &Selector{
 		Builder:     s.Builder.clone(),
 		ctx:         s.ctx,
@@ -2665,6 +2669,7 @@ func (s *Selector) Clone() *Selector {
 		order:       append([]any{}, s.order...),
 		assumeOrder: append([]string{}, s.assumeOrder...),
 		selection:   append([]selection{}, s.selection...),
+		windows:     windows,
 	}
 }
 
@@ -2771,6 +2776,28 @@ func (s *Selector) Having(p *Predicate) *Selector {
 	return s
 }
 
+// Window adds a named window definition for the WINDOW clause.
+// Supported only by YDB
+//
+//	Select("id", "name").
+//		From(Table("users")).
+//		Window("w1",
+//			Window(func(b *Builder) { b.WriteString("ROW_NUMBER()") }).
+//				PartitionBy("department").
+//				OrderBy("salary"),
+//		)
+func (s *Selector) Window(name string, w *WindowBuilder) *Selector {
+	if !s.ydb() {
+		s.AddError(fmt.Errorf("WINDOW: unsupported dialect %q", s.dialect))
+		return s
+	}
+	if s.windows == nil {
+		s.windows = make(map[string]*WindowBuilder)
+	}
+	s.windows[name] = w
+	return s
+}
+
 // Query returns query representation of a `SELECT` statement.
 func (s *Selector) Query() (string, []any) {
 	b := s.Builder.clone()
@@ -2845,6 +2872,9 @@ func (s *Selector) Query() (string, []any) {
 		b.WriteString(" HAVING ")
 		b.Join(s.having)
 	}
+	if len(s.windows) > 0 {
+		s.joinWindows(&b)
+	}
 	if len(s.setOps) > 0 {
 		s.joinSetOps(&b)
 	}
@@ -2886,6 +2916,26 @@ func (s *Selector) joinLock(b *Builder) {
 	}
 	if s.lock.Action != "" {
 		b.Pad().WriteString(string(s.lock.Action))
+	}
+}
+
+func (s *Selector) joinWindows(b *Builder) {
+	if len(s.windows) == 0 {
+		return
+	}
+
+	b.WriteString(" WINDOW ")
+	first := true
+	for name, window := range s.windows {
+		if !first {
+			b.Comma()
+		}
+		first = false
+
+		b.Ident(name).WriteString(" AS ")
+		b.Wrap(func(b *Builder) {
+			window.writeWindowDefinition(b)
+		})
 	}
 }
 
@@ -3073,6 +3123,25 @@ type WindowBuilder struct {
 	fn        func(*Builder) // e.g. ROW_NUMBER(), RANK()
 	partition func(*Builder)
 	order     []any
+
+	// YDB-specific:
+	compact  bool         // PARTITION COMPACT BY hint
+	frame    *windowFrame // Window Frame definition (ROWS BETWEEN ...)
+	namedRef string       // Named window reference (OVER window_name)
+}
+
+// windowFrame represents a window frame specification.
+// supported only by YDB
+type windowFrame struct {
+	mode  string         // "ROWS"
+	start frameBoundary  // Frame start boundary
+	end   *frameBoundary // Frame end boundary (optional)
+}
+
+// frameBoundary represents a frame boundary specification.
+type frameBoundary struct {
+	boundaryType string // "UNBOUNDED PRECEDING", "CURRENT ROW", "UNBOUNDED FOLLOWING"
+	offset       *int   // for N PRECEDING / N FOLLOWING
 }
 
 // RowNumber returns a new window clause with the ROW_NUMBER() as a function.
@@ -3094,12 +3163,39 @@ func Window(fn func(*Builder)) *WindowBuilder {
 	return &WindowBuilder{fn: fn}
 }
 
+// WindowNamed creates a window function that references a named window.
+// The window must be defined in the WINDOW clause using Selector.Window().
+//
+//	WindowNamed(func(b *Builder) { b.WriteString("AVG(value)") }, "w")
+//	// Generates: AVG(value) OVER w
+func WindowNamed(fn func(*Builder), windowName string) *WindowBuilder {
+	return &WindowBuilder{fn: fn, namedRef: windowName}
+}
+
 // PartitionBy indicates to divide the query rows into groups by the given columns.
 // Note that, standard SQL spec allows partition only by columns, and in order to
 // use the "expression" version, use the PartitionByExpr.
 func (w *WindowBuilder) PartitionBy(columns ...string) *WindowBuilder {
 	w.partition = func(b *Builder) {
 		b.IdentComma(columns...)
+	}
+	return w
+}
+
+// PartitionCompactBy is like PartitionBy but adds the COMPACT hint for YDB.
+// The COMPACT hint requires additional memory O(partition size) but avoids extra JOIN.
+//
+//	Window(func(b *Builder) { b.WriteString("AVG(value)") }).
+//		PartitionCompactBy("user_id").
+//		OrderBy("created_at")
+func (w *WindowBuilder) PartitionCompactBy(columns ...string) *WindowBuilder {
+	if w.ydb() {
+		w.compact = true
+		w.partition = func(b *Builder) {
+			b.IdentComma(columns...)
+		}
+	} else {
+		w.AddError(fmt.Errorf("PARTITION COMPACT BY: unsupported dialect: %q", w.dialect))
 	}
 	return w
 }
@@ -3129,18 +3225,143 @@ func (w *WindowBuilder) OrderExpr(exprs ...Querier) *WindowBuilder {
 	return w
 }
 
+// Frame sets the window frame definition.
+// Supported only by YDB
+//
+//	Window(func(b *Builder) { b.WriteString("AVG(value)") }).
+//		PartitionBy("user_id").
+//		OrderBy("created_at").
+//		Frame(RowsFrame().Between(UnboundedPreceding(), CurrentRow()))
+func (w *WindowBuilder) Frame(frame *windowFrame) *WindowBuilder {
+	if w.ydb() {
+		w.frame = frame
+	} else {
+		w.AddError(fmt.Errorf("Frame clauses: unsupported dialect: %q", w.dialect))
+	}
+	return w
+}
+
+// RowsFrame creates a new ROWS frame builder.
+// Supported only by YDB
+func RowsFrame() *windowFrameBuilder {
+	return &windowFrameBuilder{mode: "ROWS"}
+}
+
+// windowFrameBuilder helps build window frame specifications.
+type windowFrameBuilder struct {
+	mode string
+}
+
+// Between sets both start and end boundaries for the frame.
+func (f *windowFrameBuilder) Between(start frameBoundary, end frameBoundary) *windowFrame {
+	return &windowFrame{
+		mode:  f.mode,
+		start: start,
+		end:   &end,
+	}
+}
+
+// From sets only the start boundary (end defaults to CURRENT ROW).
+func (f *windowFrameBuilder) From(start frameBoundary) *windowFrame {
+	return &windowFrame{
+		mode:  f.mode,
+		start: start,
+	}
+}
+
+// UnboundedPreceding returns a frame boundary for UNBOUNDED PRECEDING.
+func UnboundedPreceding() frameBoundary {
+	return frameBoundary{boundaryType: "UNBOUNDED PRECEDING"}
+}
+
+// UnboundedFollowing returns a frame boundary for UNBOUNDED FOLLOWING.
+func UnboundedFollowing() frameBoundary {
+	return frameBoundary{boundaryType: "UNBOUNDED FOLLOWING"}
+}
+
+// CurrentRow returns a frame boundary for CURRENT ROW.
+func CurrentRow() frameBoundary {
+	return frameBoundary{boundaryType: "CURRENT ROW"}
+}
+
+// Preceding returns a frame boundary for N PRECEDING.
+func Preceding(offset int) frameBoundary {
+	return frameBoundary{boundaryType: "PRECEDING", offset: &offset}
+}
+
+// Following returns a frame boundary for N FOLLOWING.
+func Following(offset int) frameBoundary {
+	return frameBoundary{boundaryType: "FOLLOWING", offset: &offset}
+}
+
 // Query returns query representation of the window function.
 func (w *WindowBuilder) Query() (string, []any) {
+	query, args, _ := w.QueryErr()
+	return query, args
+}
+
+func (w *WindowBuilder) QueryErr() (string, []any, error) {
+	err := w.Err()
+	if err != nil {
+		return "", nil, err
+	}
+
 	w.fn(&w.Builder)
 	w.WriteString(" OVER ")
-	w.Wrap(func(b *Builder) {
-		if w.partition != nil {
-			b.WriteString("PARTITION BY ")
-			w.partition(b)
+
+	// Named window reference: OVER window_name
+	if w.namedRef != "" {
+		w.Ident(w.namedRef)
+	} else {
+		// Inline window definition: OVER (...)
+		w.Wrap(func(b *Builder) {
+			w.writeWindowDefinition(b)
+		})
+	}
+	return w.Builder.String(), w.args, nil
+}
+
+// writeWindowDefinition writes the window definition (PARTITION BY, ORDER BY, frame).
+func (w *WindowBuilder) writeWindowDefinition(b *Builder) {
+	if w.partition != nil {
+		b.WriteString("PARTITION ")
+
+		// YDB-specific: COMPACT hint
+		if w.compact && b.ydb() {
+			b.WriteString("COMPACT ")
 		}
-		joinOrder(w.order, b)
-	})
-	return w.Builder.String(), w.args
+
+		b.WriteString("BY ")
+		w.partition(b)
+	}
+	joinOrder(w.order, b)
+
+	if w.frame != nil {
+		b.WriteString(" ")
+		w.writeFrame(b, w.frame)
+	}
+}
+
+// writeFrame writes the frame definition to the builder.
+func (w *WindowBuilder) writeFrame(b *Builder, f *windowFrame) {
+	b.WriteString(f.mode).WriteString(" ")
+
+	if f.end != nil {
+		b.WriteString("BETWEEN ")
+		w.writeFrameBoundary(b, &f.start)
+		b.WriteString(" AND ")
+		w.writeFrameBoundary(b, f.end)
+	} else {
+		w.writeFrameBoundary(b, &f.start)
+	}
+}
+
+// writeFrameBoundary writes a single frame boundary.
+func (w *WindowBuilder) writeFrameBoundary(b *Builder, fb *frameBoundary) {
+	if fb.offset != nil {
+		b.WriteString(strconv.Itoa(*fb.offset)).WriteString(" ")
+	}
+	b.WriteString(fb.boundaryType)
 }
 
 // Wrapper wraps a given Querier with different format.
