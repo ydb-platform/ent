@@ -1736,6 +1736,47 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 		},
 		{
 			input: Dialect(dialect.YDB).
+				Replace("users").
+				Columns("id", "name", "age").
+				Values(1, "a8m", 10),
+			wantQuery: "REPLACE INTO `users` (`id`, `name`, `age`) VALUES ($p0, $p1, $p2)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1},
+				driver.NamedValue{Name: "p1", Value: "a8m"},
+				driver.NamedValue{Name: "p2", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Replace("users").
+				Columns("id", "name", "age").
+				Values(1, "a8m", 10).
+				Values(2, "foo", 20),
+			wantQuery: "REPLACE INTO `users` (`id`, `name`, `age`) VALUES ($p0, $p1, $p2), ($p3, $p4, $p5)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1},
+				driver.NamedValue{Name: "p1", Value: "a8m"},
+				driver.NamedValue{Name: "p2", Value: 10},
+				driver.NamedValue{Name: "p3", Value: 2},
+				driver.NamedValue{Name: "p4", Value: "foo"},
+				driver.NamedValue{Name: "p5", Value: 20},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Replace("orders").
+				Columns("order_id", "status", "amount").
+				Values(1001, "shipped", 500).
+				Returning("*"),
+			wantQuery: "REPLACE INTO `orders` (`order_id`, `status`, `amount`) VALUES ($p0, $p1, $p2) RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1001},
+				driver.NamedValue{Name: "p1", Value: "shipped"},
+				driver.NamedValue{Name: "p2", Value: 500},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
 				Update("users").
 				Set("name", "foo").
 				Where(EQ("id", 1)).
