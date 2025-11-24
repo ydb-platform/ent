@@ -146,6 +146,10 @@ type InsertBuilder struct {
 	returning []string
 	values    [][]any
 	conflict  *conflict
+
+	// YDB-specific:
+	isUpsert  bool // use UPSERT instead of INSERT
+	isReplace bool // use REPLACE instead of INSERT
 }
 
 // Insert creates a builder for the `INSERT INTO` statement.
@@ -157,6 +161,36 @@ type InsertBuilder struct {
 //
 // Note: Insert inserts all values in one batch.
 func Insert(table string) *InsertBuilder { return &InsertBuilder{table: table} }
+
+// Upsert creates a builder for the `UPSERT INTO` statement.
+// UPSERT updates or inserts rows based on primary key comparison.
+// For existing rows, specified columns are updated while other columns are preserved.
+// For missing rows, new rows are inserted.
+//
+//	Upsert("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10).
+//		Values(2, "foo", 20)
+//
+// Note: UPSERT is only supported in YDB dialect.
+func Upsert(table string) *InsertBuilder {
+	return &InsertBuilder{table: table, isUpsert: true}
+}
+
+// Replace creates a builder for the `REPLACE INTO` statement.
+// REPLACE overwrites entire rows based on primary key comparison.
+// For existing rows, the entire row is replaced (unspecified columns get default values).
+// For missing rows, new rows are inserted.
+//
+//	Replace("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10).
+//		Values(2, "foo", 20)
+//
+// Note: REPLACE is only supported in YDB dialect.
+func Replace(table string) *InsertBuilder {
+	return &InsertBuilder{table: table, isReplace: true}
+}
 
 // Schema sets the database name for the insert table.
 func (i *InsertBuilder) Schema(name string) *InsertBuilder {
@@ -438,11 +472,28 @@ func (i *InsertBuilder) Query() (string, []any) {
 	return query, args
 }
 
-// QueryErr returns query representation of an `INSERT INTO`
-// statement and any error occurred in building the statement.
+// QueryErr returns query representation of an `INSERT INTO`, `UPSERT INTO`,
+// or `REPLACE INTO` statement and any error occurred in building the statement.
 func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	b := i.Builder.clone()
-	b.WriteString("INSERT INTO ")
+
+	switch {
+	case i.isUpsert:
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("UPSERT INTO: unsupported dialect: %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		b.WriteString("UPSERT INTO ")
+	case i.isReplace:
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("REPLACE INTO: unsupported dialect: %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		b.WriteString("REPLACE INTO ")
+	default:
+		b.WriteString("INSERT INTO ")
+	}
+
 	b.writeSchema(i.schema)
 	b.Ident(i.table).Pad()
 	if i.defaults && len(i.columns) == 0 {
@@ -529,6 +580,7 @@ type UpdateBuilder struct {
 	order     []any
 	limit     *int
 	prefix    Queries
+	onSelect  *Selector // YDB-specific: UPDATE ON subquery
 }
 
 // Update creates a builder for the `UPDATE` statement.
@@ -638,6 +690,25 @@ func (u *UpdateBuilder) Returning(columns ...string) *UpdateBuilder {
 	return u
 }
 
+// On sets a subquery for the UPDATE ON statement (YDB-specific).
+// The subquery must return columns that include all primary key columns.
+// For each row in the subquery result, the corresponding row in the table is updated.
+//
+//	Update("users").
+//		On(
+//			Select("key", "name")
+//				.From(Table("temp_updates"))
+//				.Where(EQ("status", "pending"))
+//		)
+func (u *UpdateBuilder) On(s *Selector) *UpdateBuilder {
+	if u.ydb() {
+		u.onSelect = s
+	} else {
+		u.AddError(fmt.Errorf("UPDATE ON: unsupported dialect: %q", u.dialect))
+	}
+	return u
+}
+
 // Query returns query representation of an `UPDATE` statement.
 func (u *UpdateBuilder) Query() (string, []any) {
 	b := u.Builder.clone()
@@ -647,7 +718,18 @@ func (u *UpdateBuilder) Query() (string, []any) {
 	}
 	b.WriteString("UPDATE ")
 	b.writeSchema(u.schema)
-	b.Ident(u.table).WriteString(" SET ")
+	b.Ident(u.table)
+
+	// UPDATE ON pattern (YDB-specific)
+	if u.onSelect != nil {
+		b.WriteString(" ON ")
+		b.Join(u.onSelect)
+		joinReturning(u.returning, &b)
+		return b.String(), b.args
+	}
+
+	// Standard UPDATE SET pattern
+	b.WriteString(" SET ")
 	u.writeSetter(&b)
 	if u.where != nil {
 		b.WriteString(" WHERE ")
@@ -693,6 +775,10 @@ type DeleteBuilder struct {
 	table  string
 	schema string
 	where  *Predicate
+
+	// For YDB's DELETE FROM ... ON SELECT pattern
+	onSelect  *Selector
+	returning []string
 }
 
 // Delete creates a builder for the `DELETE` statement.
@@ -735,16 +821,50 @@ func (d *DeleteBuilder) FromSelect(s *Selector) *DeleteBuilder {
 	return d
 }
 
+// On sets the subquery for DELETE FROM ... ON SELECT pattern (YDB-specific).
+// This allows deleting rows based on a subquery that returns primary key columns.
+//
+//	Delete("users").
+//		On(Select("id").From(Table("users")).Where(EQ("status", "inactive")))
+func (d *DeleteBuilder) On(s *Selector) *DeleteBuilder {
+	if d.ydb() {
+		d.onSelect = s
+	} else {
+		d.AddError(fmt.Errorf("DELETE ON: unsupported dialect: %q", d.dialect))
+	}
+	return d
+}
+
+// Returning adds the `RETURNING` clause to the delete statement.
+// Supported by YDB.
+func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
+	if d.ydb() {
+		d.returning = columns
+	} else {
+		d.AddError(fmt.Errorf("DELETE RETURNING: unsupported dialect: %q", d.dialect))
+	}
+	return d
+}
+
 // Query returns query representation of a `DELETE` statement.
 func (d *DeleteBuilder) Query() (string, []any) {
-	d.WriteString("DELETE FROM ")
-	d.writeSchema(d.schema)
-	d.Ident(d.table)
-	if d.where != nil {
-		d.WriteString(" WHERE ")
-		d.Join(d.where)
+	b := d.Builder.clone()
+	b.WriteString("DELETE FROM ")
+	b.writeSchema(d.schema)
+	b.Ident(d.table)
+
+	// YDB-specific DELETE ON SELECT pattern
+	if d.onSelect != nil {
+		d.onSelect.SetDialect(b.dialect)
+		b.WriteString(" ON ")
+		b.Join(d.onSelect)
+	} else if d.where != nil {
+		b.WriteString(" WHERE ")
+		b.Join(d.where)
 	}
-	return d.String(), d.args
+
+	joinReturning(d.returning, &b)
+	return b.String(), b.args
 }
 
 // Predicate is a where predicate.
@@ -1583,6 +1703,7 @@ type SelectTable struct {
 	name   string
 	schema string
 	quote  bool
+	index  string // YDB-specific: secondary index name for VIEW clause
 }
 
 // Table returns a new table selector.
@@ -1602,6 +1723,20 @@ func (s *SelectTable) Schema(name string) *SelectTable {
 // As adds the AS clause to the table selector.
 func (s *SelectTable) As(alias string) *SelectTable {
 	s.as = alias
+	return s
+}
+
+// View sets the secondary index name for the VIEW clause (YDB-specific).
+// This allows explicit use of secondary indexes in SELECT and JOIN operations.
+//
+//	t := Table("users").View("idx_email").As("u")
+//	Select().From(Table("orders")).Join(t).On(...)
+func (s *SelectTable) View(index string) *SelectTable {
+	if s.ydb() {
+		s.index = index
+	} else {
+		s.AddError(fmt.Errorf("VIEW: unsupported dialect: %q", s.dialect))
+	}
 	return s
 }
 
@@ -1644,6 +1779,13 @@ func (s *SelectTable) ref() string {
 	b := &Builder{dialect: s.dialect}
 	b.writeSchema(s.schema)
 	b.Ident(s.name)
+
+	// YDB-specific: VIEW clause for secondary indexes
+	if s.index != "" {
+		b.WriteString(" VIEW ")
+		b.Ident(s.index)
+	}
+
 	if s.as != "" {
 		b.WriteString(" AS ")
 		b.Ident(s.as)
@@ -1675,24 +1817,25 @@ type Selector struct {
 	Builder
 	// ctx stores contextual data typically from
 	// generated code such as alternate table schemas.
-	ctx       context.Context
-	as        string
-	selection []selection
-	from      []TableView
-	joins     []join
-	collected [][]*Predicate
-	where     *Predicate
-	or        bool
-	not       bool
-	order     []any
-	group     []string
-	having    *Predicate
-	limit     *int
-	offset    *int
-	distinct  bool
-	setOps    []setOp
-	prefix    Queries
-	lock      *LockOptions
+	ctx         context.Context
+	as          string
+	selection   []selection
+	from        []TableView
+	joins       []join
+	collected   [][]*Predicate
+	where       *Predicate
+	or          bool
+	not         bool
+	order       []any
+	assumeOrder []string // YDB-specific: ASSUME ORDER BY columns
+	group       []string
+	having      *Predicate
+	limit       *int
+	offset      *int
+	distinct    bool
+	setOps      []setOp
+	prefix      Queries
+	lock        *LockOptions
 }
 
 // New returns a new Selector with the same dialect and context.
@@ -2107,6 +2250,36 @@ func (s *Selector) FullJoin(t TableView) *Selector {
 	return s.join("FULL JOIN", t)
 }
 
+// LeftSemiJoin appends a `LEFT SEMI JOIN` clause to the statement (YDB-specific).
+func (s *Selector) LeftSemiJoin(t TableView) *Selector {
+	return s.join("LEFT SEMI JOIN", t)
+}
+
+// RightSemiJoin appends a `RIGHT SEMI JOIN` clause to the statement (YDB-specific).
+func (s *Selector) RightSemiJoin(t TableView) *Selector {
+	return s.join("RIGHT SEMI JOIN", t)
+}
+
+// LeftOnlyJoin appends a `LEFT ONLY JOIN` clause to the statement (YDB-specific).
+func (s *Selector) LeftOnlyJoin(t TableView) *Selector {
+	return s.join("LEFT ONLY JOIN", t)
+}
+
+// RightOnlyJoin appends a `RIGHT ONLY JOIN` clause to the statement (YDB-specific).
+func (s *Selector) RightOnlyJoin(t TableView) *Selector {
+	return s.join("RIGHT ONLY JOIN", t)
+}
+
+// CrossJoin appends a `CROSS JOIN` clause to the statement.
+func (s *Selector) CrossJoin(t TableView) *Selector {
+	return s.join("CROSS JOIN", t)
+}
+
+// ExclusionJoin appends an `EXCLUSION JOIN` clause to the statement (YDB-specific).
+func (s *Selector) ExclusionJoin(t TableView) *Selector {
+	return s.join("EXCLUSION JOIN", t)
+}
+
 // join adds a join table to the selector with the given kind.
 func (s *Selector) join(kind string, t TableView) *Selector {
 	s.joins = append(s.joins, join{
@@ -2396,21 +2569,22 @@ func (s *Selector) Clone() *Selector {
 		joins[i] = s.joins[i].clone()
 	}
 	return &Selector{
-		Builder:   s.Builder.clone(),
-		ctx:       s.ctx,
-		as:        s.as,
-		or:        s.or,
-		not:       s.not,
-		from:      s.from,
-		limit:     s.limit,
-		offset:    s.offset,
-		distinct:  s.distinct,
-		where:     s.where.clone(),
-		having:    s.having.clone(),
-		joins:     append([]join{}, joins...),
-		group:     append([]string{}, s.group...),
-		order:     append([]any{}, s.order...),
-		selection: append([]selection{}, s.selection...),
+		Builder:     s.Builder.clone(),
+		ctx:         s.ctx,
+		as:          s.as,
+		or:          s.or,
+		not:         s.not,
+		from:        s.from,
+		limit:       s.limit,
+		offset:      s.offset,
+		distinct:    s.distinct,
+		where:       s.where.clone(),
+		having:      s.having.clone(),
+		joins:       append([]join{}, joins...),
+		group:       append([]string{}, s.group...),
+		order:       append([]any{}, s.order...),
+		assumeOrder: append([]string{}, s.assumeOrder...),
+		selection:   append([]selection{}, s.selection...),
 	}
 }
 
@@ -2438,6 +2612,11 @@ func DescExpr(x Querier) Querier {
 
 // OrderBy appends the `ORDER BY` clause to the `SELECT` statement.
 func (s *Selector) OrderBy(columns ...string) *Selector {
+	if s.ydb() && len(s.assumeOrder) != 0 {
+		s.AddError(fmt.Errorf("ORDER BY: can't be used with ASSUME ORDER BY simultaneously"))
+		return s
+	}
+
 	for i := range columns {
 		s.order = append(s.order, columns[i])
 	}
@@ -2476,6 +2655,27 @@ func (s *Selector) OrderExprFunc(f func(*Builder)) *Selector {
 // ClearOrder clears the ORDER BY clause to be empty.
 func (s *Selector) ClearOrder() *Selector {
 	s.order = nil
+	return s
+}
+
+// AssumeOrderBy appends the `ASSUME ORDER BY` clause to the `SELECT` statement (YDB-specific).
+// This tells YDB to assume the data is already sorted without actually sorting it.
+// This is an optimization hint and only works with column names (not expressions).
+//
+//	Select("*").
+//		From(Table("users")).
+//		AssumeOrderBy("first-key", Desc("second-key"))
+func (s *Selector) AssumeOrderBy(columns ...string) *Selector {
+	if s.ydb() {
+		if len(s.order) != 0 {
+			s.AddError(fmt.Errorf("ASSUME ORDER BY: can't be used with ORDER BY simultaneously"))
+			return s
+		}
+
+		s.assumeOrder = append(s.assumeOrder, columns...)
+	} else {
+		s.AddError(fmt.Errorf("ASSUME ORDER BY: unsupported dialect: %q", s.dialect))
+	}
 	return s
 }
 
@@ -2569,6 +2769,7 @@ func (s *Selector) Query() (string, []any) {
 		s.joinSetOps(&b)
 	}
 	joinOrder(s.order, &b)
+	s.joinAssumeOrder(&b)
 	if s.limit != nil {
 		b.WriteString(" LIMIT ")
 		b.WriteString(strconv.Itoa(*s.limit))
@@ -2647,8 +2848,22 @@ func joinOrder(order []any, b *Builder) {
 	}
 }
 
+func (s *Selector) joinAssumeOrder(b *Builder) {
+	if !b.ydb() || len(s.assumeOrder) == 0 {
+		return
+	}
+	b.WriteString(" ASSUME ORDER BY ")
+	for i := range s.assumeOrder {
+		if i > 0 {
+			b.Comma()
+		}
+		b.Ident(s.assumeOrder[i])
+	}
+}
+
 func joinReturning(columns []string, b *Builder) {
-	if len(columns) == 0 || (!b.postgres() && !b.sqlite()) {
+	supportedByDialect := b.postgres() || b.sqlite() || b.ydb()
+	if len(columns) == 0 || !supportedByDialect {
 		return
 	}
 	b.WriteString(" RETURNING ")
@@ -3177,6 +3392,9 @@ func (b *Builder) Arg(a any) *Builder {
 		// Postgres' arguments are referenced using the syntax $n.
 		// $1 refers to the 1st argument, $2 to the 2nd, and so on.
 		format = "$" + strconv.Itoa(b.total+1)
+	} else if b.ydb() {
+		// YDB uses named parameters with the syntax $paramName.
+		format = "$p" + strconv.Itoa(b.total)
 	}
 	if f, ok := a.(ParamFormatter); ok {
 		format = f.FormatParam(format, &StmtInfo{
@@ -3215,7 +3433,16 @@ func (b *Builder) Argf(format string, a any) *Builder {
 		return b
 	}
 	b.total++
-	b.args = append(b.args, a)
+
+	// YDB requires named parameters
+	if b.ydb() {
+		// Extract parameter name from format (e.g., "$p0" -> "p0")
+		paramName := strings.TrimPrefix(format, "$")
+		b.args = append(b.args, driver.NamedValue{Name: paramName, Value: a})
+	} else {
+		b.args = append(b.args, a)
+	}
+
 	b.WriteString(format)
 	return b
 }
@@ -3331,6 +3558,11 @@ func (b Builder) sqlite() bool {
 	return b.Dialect() == dialect.SQLite
 }
 
+// ydb reports if the builder dialect is YDB.
+func (b Builder) ydb() bool {
+	return b.Dialect() == dialect.YDB
+}
+
 // fromIdent sets the builder dialect from the identifier format.
 func (b *Builder) fromIdent(ident string) {
 	if strings.Contains(ident, `"`) {
@@ -3433,6 +3665,32 @@ func (d *DialectBuilder) Column(name string) *ColumnBuilder {
 //		Insert("users").Columns("age").Values(1)
 func (d *DialectBuilder) Insert(table string) *InsertBuilder {
 	b := Insert(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
+// Upsert creates an InsertBuilder for the UPSERT statement with the configured dialect.
+// UPSERT is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		Upsert("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10)
+func (d *DialectBuilder) Upsert(table string) *InsertBuilder {
+	b := Upsert(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
+// Replace creates an InsertBuilder for the REPLACE statement with the configured dialect.
+// REPLACE is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		Replace("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10)
+func (d *DialectBuilder) Replace(table string) *InsertBuilder {
+	b := Replace(table)
 	b.SetDialect(d.dialect)
 	return b
 }
