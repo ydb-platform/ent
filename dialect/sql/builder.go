@@ -586,13 +586,27 @@ type UpdateBuilder struct {
 	order     []any
 	limit     *int
 	prefix    Queries
-	onSelect  *Selector // YDB-specific: UPDATE ON subquery
+
+	// YDB-specific:
+	onSelect *Selector // UPDATE ON subquery
+	isBatch  bool      // use BATCH UPDATE instead of UPDATE
 }
 
 // Update creates a builder for the `UPDATE` statement.
 //
 //	Update("users").Set("name", "foo").Set("age", 10)
 func Update(table string) *UpdateBuilder { return &UpdateBuilder{table: table} }
+
+// BatchUpdate creates a builder for the `BATCH UPDATE` statement (YDB-specific).
+// BATCH UPDATE processes large tables in batches, minimizing lock invalidation risk.
+//
+// Note: BATCH UPDATE is only supported in YDB dialect.
+// Note: YDB uses path notation for tables, e.g. "/database/path/to/table"
+//
+//	BatchUpdate("/local/my_table").Set("status", "active").Where(GT("id", 100))
+func BatchUpdate(table string) *UpdateBuilder {
+	return &UpdateBuilder{table: table, isBatch: true}
+}
 
 // Schema sets the database name for the updated table.
 func (u *UpdateBuilder) Schema(name string) *UpdateBuilder {
@@ -717,12 +731,36 @@ func (u *UpdateBuilder) On(s *Selector) *UpdateBuilder {
 
 // Query returns query representation of an `UPDATE` statement.
 func (u *UpdateBuilder) Query() (string, []any) {
+	query, args, _ := u.QueryErr()
+	return query, args
+}
+
+func (u *UpdateBuilder) QueryErr() (string, []any, error) {
 	b := u.Builder.clone()
 	if len(u.prefix) > 0 {
 		b.join(u.prefix, " ")
 		b.Pad()
 	}
-	b.WriteString("UPDATE ")
+
+	// BATCH UPDATE (YDB-specific)
+	if u.isBatch {
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("BATCH UPDATE: unsupported dialect: %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		if len(u.returning) > 0 {
+			b.AddError(fmt.Errorf("BATCH UPDATE: RETURNING clause is not supported"))
+			return "", nil, b.Err()
+		}
+		if u.onSelect != nil {
+			b.AddError(fmt.Errorf("BATCH UPDATE: UPDATE ON pattern is not supported"))
+			return "", nil, b.Err()
+		}
+		b.WriteString("BATCH UPDATE ")
+	} else {
+		b.WriteString("UPDATE ")
+	}
+
 	b.writeSchema(u.schema)
 	b.Ident(u.table)
 
@@ -731,7 +769,7 @@ func (u *UpdateBuilder) Query() (string, []any) {
 		b.WriteString(" ON ")
 		b.Join(u.onSelect)
 		joinReturning(u.returning, &b)
-		return b.String(), b.args
+		return b.String(), b.args, nil
 	}
 
 	// Standard UPDATE SET pattern
@@ -747,7 +785,7 @@ func (u *UpdateBuilder) Query() (string, []any) {
 		b.WriteString(" LIMIT ")
 		b.WriteString(strconv.Itoa(*u.limit))
 	}
-	return b.String(), b.args
+	return b.String(), b.args, nil
 }
 
 // writeSetter writes the "SET" clause for the UPDATE statement.
@@ -782,9 +820,10 @@ type DeleteBuilder struct {
 	schema string
 	where  *Predicate
 
-	// For YDB's DELETE FROM ... ON SELECT pattern
-	onSelect  *Selector
+	// YDB-specific:
+	onSelect  *Selector // DELETE FROM ... ON SELECT pattern
 	returning []string
+	isBatch   bool // use BATCH DELETE instead of DELETE
 }
 
 // Delete creates a builder for the `DELETE` statement.
@@ -801,6 +840,17 @@ type DeleteBuilder struct {
 //			),
 //		)
 func Delete(table string) *DeleteBuilder { return &DeleteBuilder{table: table} }
+
+// BatchDelete creates a builder for the `BATCH DELETE FROM` statement (YDB-specific).
+// BATCH DELETE processes large tables in batches, minimizing lock invalidation risk.
+//
+// Note: BATCH DELETE is only supported in YDB dialect.
+//
+// BatchDelete("/local/my_table")
+// 		.Where(GT("Key1", 1))
+func BatchDelete(table string) *DeleteBuilder {
+	return &DeleteBuilder{table: table, isBatch: true}
+}
 
 // Schema sets the database name for the table whose row will be deleted.
 func (d *DeleteBuilder) Schema(name string) *DeleteBuilder {
@@ -854,8 +904,32 @@ func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
 
 // Query returns query representation of a `DELETE` statement.
 func (d *DeleteBuilder) Query() (string, []any) {
+	query, args, _ := d.QueryErr()
+	return query, args
+}
+
+func (d *DeleteBuilder) QueryErr() (string, []any, error) {
 	b := d.Builder.clone()
-	b.WriteString("DELETE FROM ")
+
+	// BATCH DELETE (YDB-specific)
+	if d.isBatch {
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("BATCH DELETE: unsupported dialect: %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		if len(d.returning) > 0 {
+			b.AddError(fmt.Errorf("BATCH DELETE: RETURNING clause is not supported"))
+			return "", nil, b.Err()
+		}
+		if d.onSelect != nil {
+			b.AddError(fmt.Errorf("BATCH DELETE: DELETE ON pattern is not supported"))
+			return "", nil, b.Err()
+		}
+		b.WriteString("BATCH DELETE FROM ")
+	} else {
+		b.WriteString("DELETE FROM ")
+	}
+
 	b.writeSchema(d.schema)
 	b.Ident(d.table)
 
@@ -870,7 +944,7 @@ func (d *DeleteBuilder) Query() (string, []any) {
 	}
 
 	joinReturning(d.returning, &b)
-	return b.String(), b.args
+	return b.String(), b.args, nil
 }
 
 // Predicate is a where predicate.
@@ -3286,9 +3360,10 @@ func (b *Builder) AddError(err error) *Builder {
 }
 
 func (b *Builder) writeSchema(schema string) {
-	if schema != "" && b.dialect != dialect.SQLite {
-		b.Ident(schema).WriteByte('.')
+	if schema == "" || b.sqlite() || b.ydb() {
+		return
 	}
+	b.Ident(schema).WriteByte('.')
 }
 
 // Err returns a concatenated error of all errors encountered during
@@ -3711,12 +3786,37 @@ func (d *DialectBuilder) Update(table string) *UpdateBuilder {
 	return b
 }
 
+// BatchUpdate creates an UpdateBuilder for the BATCH UPDATE statement with the configured dialect.
+// BATCH UPDATE is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		BatchUpdate("users").
+//		Set("status", "active").
+//		Where(GT("created_at", time.Now()))
+func (d *DialectBuilder) BatchUpdate(table string) *UpdateBuilder {
+	b := BatchUpdate(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
 // Delete creates a DeleteBuilder for the configured dialect.
 //
 //	Dialect(dialect.Postgres).
 //		Delete().From("users")
 func (d *DialectBuilder) Delete(table string) *DeleteBuilder {
 	b := Delete(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
+// BatchDelete creates a DeleteBuilder for the BATCH DELETE statement with the configured dialect.
+// BATCH DELETE is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		BatchDelete("users").
+//		Where(GT("Key1", 1))
+func (d *DialectBuilder) BatchDelete(table string) *DeleteBuilder {
+	b := BatchDelete(table)
 	b.SetDialect(d.dialect)
 	return b
 }

@@ -2336,6 +2336,121 @@ func TestSelector_VIEW_SecondaryIndex_YDB(t *testing.T) {
 	})
 }
 
+func TestBatchUpdate_YDB(t *testing.T) {
+	t.Run("Basic BATCH UPDATE with SET and WHERE", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.BatchUpdate("my_table").
+			Set("Value1", "foo").
+			Set("Value2", 0).
+			Where(GT("Key1", 1)).
+			Query()
+		
+		require.Equal(t, "BATCH UPDATE `my_table` SET `Value1` = $p0, `Value2` = $p1 WHERE `Key1` > $p2", query)
+		require.Equal(t, []any{
+			driver.NamedValue{Name: "p0", Value: "foo"},
+			driver.NamedValue{Name: "p1", Value: 0},
+			driver.NamedValue{Name: "p2", Value: 1},
+		}, args)
+	})
+
+	t.Run("BATCH UPDATE on non-YDB dialect should error", func(t *testing.T) {
+		builder := Dialect(dialect.MySQL).
+			BatchUpdate("users").
+			Set("status", "active").
+			Where(GT("created_at", "2024-01-01"))
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+	})
+
+	t.Run("BATCH UPDATE with RETURNING should error", func(t *testing.T) {
+		builder := Dialect(dialect.YDB).
+			BatchUpdate("users").
+			Set("status", "active").
+			Returning("id", "status")
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+	})
+
+	t.Run("BATCH UPDATE with UPDATE ON pattern should error", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		subquery := d.Select("id").From(Table("orders")).Where(EQ("status", "pending"))
+		
+		builder := d.BatchUpdate("users").
+			Set("status", "active").
+			On(subquery)
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "BATCH UPDATE: UPDATE ON pattern is not supported")
+	})
+}
+
+func TestBatchDelete_YDB(t *testing.T) {
+	t.Run("Basic BATCH DELETE", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.BatchDelete("my_table").
+			Where(And(GT("Key1", 1), GTE("Key2", "One"))).
+			Query()
+		
+		require.Equal(t, "BATCH DELETE FROM `my_table` WHERE `Key1` > $p0 AND `Key2` >= $p1", query)
+		require.Equal(t, []any{
+			driver.NamedValue{Name: "p0", Value: 1},
+			driver.NamedValue{Name: "p1", Value: "One"},
+		}, args)
+	})
+
+	t.Run("BATCH DELETE on non-YDB dialect should error", func(t *testing.T) {
+		builder := Dialect(dialect.MySQL).
+			BatchDelete("users").
+			Where(GT("id", 100))
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+	})
+
+	t.Run("BATCH DELETE with RETURNING should error", func(t *testing.T) {
+		builder := Dialect(dialect.YDB).
+			BatchDelete("users").
+			Where(GT("id", 100)).
+			Returning("id")
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+	})
+
+	t.Run("BATCH DELETE with DELETE ON pattern should error", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		subquery := d.Select("id").From(Table("users")).Where(EQ("status", "deleted"))
+		
+		builder := d.BatchDelete("users").
+			On(subquery)
+		
+		query, args, err := builder.QueryErr()
+		
+		require.Empty(t, query)
+		require.Empty(t, args)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "BATCH DELETE: DELETE ON pattern is not supported")
+	})
+}
+
 func TestCreateView_YDB(t *testing.T) {
 	t.Run("Basic view with security_invoker", func(t *testing.T) {
 		d := Dialect(dialect.YDB)
