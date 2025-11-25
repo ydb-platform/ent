@@ -131,6 +131,12 @@ func (v *ViewBuilder) Query() (string, []any) {
 	if len(v.columns) > 0 {
 		v.Pad().Wrap(func(b *Builder) { b.JoinComma(v.columns...) })
 	}
+
+	// YDB-specific: WITH (security_invoker = TRUE) is mandatory
+	if v.ydb() {
+		v.WriteString(" WITH (security_invoker = TRUE)")
+	}
+
 	v.WriteString(" AS ")
 	v.Join(v.as)
 	return v.String(), v.args
