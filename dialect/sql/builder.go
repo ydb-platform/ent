@@ -847,8 +847,7 @@ func Delete(table string) *DeleteBuilder { return &DeleteBuilder{table: table} }
 // Note: BATCH DELETE is only supported in YDB dialect.
 //
 // BatchDelete("/local/my_table")
-//
-//	.Where(GT("Key1", 1))
+// 		.Where(GT("Key1", 1))
 func BatchDelete(table string) *DeleteBuilder {
 	return &DeleteBuilder{table: table, isBatch: true}
 }
