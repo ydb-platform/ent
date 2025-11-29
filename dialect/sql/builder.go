@@ -229,7 +229,11 @@ func (i *InsertBuilder) Values(values ...any) *InsertBuilder {
 
 // Default sets the default values clause based on the dialect type.
 func (i *InsertBuilder) Default() *InsertBuilder {
-	i.defaults = true
+	if i.ydb() {
+		i.AddError(fmt.Errorf("DEFAULT is not supported by %q", i.dialect))
+	} else {
+		i.defaults = true
+	}
 	return i
 }
 
@@ -404,6 +408,10 @@ func ResolveWith(fn func(*UpdateSet)) ConflictOption {
 //			sql.ResolveWithNewValues()
 //		)
 func (i *InsertBuilder) OnConflict(opts ...ConflictOption) *InsertBuilder {
+	if i.ydb() {
+		i.AddError(fmt.Errorf("ON CONFLICT is not supported by %q", i.dialect))
+		return i
+	}
 	if i.conflict == nil {
 		i.conflict = &conflict{}
 	}
@@ -486,13 +494,13 @@ func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	switch {
 	case i.isUpsert:
 		if !b.ydb() {
-			b.AddError(fmt.Errorf("UPSERT INTO: unsupported dialect: %q", b.dialect))
+			b.AddError(fmt.Errorf("UPSERT INTO is not supported by %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		b.WriteString("UPSERT INTO ")
 	case i.isReplace:
 		if !b.ydb() {
-			b.AddError(fmt.Errorf("REPLACE INTO: unsupported dialect: %q", b.dialect))
+			b.AddError(fmt.Errorf("REPLACE INTO is not supported by %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		b.WriteString("REPLACE INTO ")
@@ -676,8 +684,8 @@ func (u *UpdateBuilder) Empty() bool {
 // OrderBy appends the `ORDER BY` clause to the `UPDATE` statement.
 // Supported by SQLite and MySQL.
 func (u *UpdateBuilder) OrderBy(columns ...string) *UpdateBuilder {
-	if u.postgres() {
-		u.AddError(errors.New("ORDER BY is not supported by PostgreSQL"))
+	if u.postgres() || u.ydb() {
+		u.AddError(fmt.Errorf("ORDER BY is not supported by %q", u.dialect))
 		return u
 	}
 	for i := range columns {
@@ -689,8 +697,8 @@ func (u *UpdateBuilder) OrderBy(columns ...string) *UpdateBuilder {
 // Limit appends the `LIMIT` clause to the `UPDATE` statement.
 // Supported by SQLite and MySQL.
 func (u *UpdateBuilder) Limit(limit int) *UpdateBuilder {
-	if u.postgres() {
-		u.AddError(errors.New("LIMIT is not supported by PostgreSQL"))
+	if u.postgres() || u.ydb() {
+		u.AddError(fmt.Errorf("LIMIT is not supported by %q", u.dialect))
 		return u
 	}
 	u.limit = &limit
@@ -724,7 +732,7 @@ func (u *UpdateBuilder) On(s *Selector) *UpdateBuilder {
 	if u.ydb() {
 		u.onSelect = s
 	} else {
-		u.AddError(fmt.Errorf("UPDATE ON: unsupported dialect: %q", u.dialect))
+		u.AddError(fmt.Errorf("UPDATE ON is not supported by %q", u.dialect))
 	}
 	return u
 }
@@ -745,7 +753,7 @@ func (u *UpdateBuilder) QueryErr() (string, []any, error) {
 	// BATCH UPDATE (YDB-specific)
 	if u.isBatch {
 		if !b.ydb() {
-			b.AddError(fmt.Errorf("BATCH UPDATE: unsupported dialect: %q", b.dialect))
+			b.AddError(fmt.Errorf("BATCH UPDATE is not supported by %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		if len(u.returning) > 0 {
@@ -846,8 +854,8 @@ func Delete(table string) *DeleteBuilder { return &DeleteBuilder{table: table} }
 //
 // Note: BATCH DELETE is only supported in YDB dialect.
 //
-// BatchDelete("/local/my_table")
-// 		.Where(GT("Key1", 1))
+// BatchDelete("/local/my_table").
+// 		Where(GT("Key1", 1))
 func BatchDelete(table string) *DeleteBuilder {
 	return &DeleteBuilder{table: table, isBatch: true}
 }
@@ -886,7 +894,7 @@ func (d *DeleteBuilder) On(s *Selector) *DeleteBuilder {
 	if d.ydb() {
 		d.onSelect = s
 	} else {
-		d.AddError(fmt.Errorf("DELETE ON: unsupported dialect: %q", d.dialect))
+		d.AddError(fmt.Errorf("DELETE ON is not supported by %q", d.dialect))
 	}
 	return d
 }
@@ -897,7 +905,7 @@ func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
 	if d.ydb() {
 		d.returning = columns
 	} else {
-		d.AddError(fmt.Errorf("DELETE RETURNING: unsupported dialect: %q", d.dialect))
+		d.AddError(fmt.Errorf("DELETE RETURNING is not supported by %q", d.dialect))
 	}
 	return d
 }
@@ -914,7 +922,7 @@ func (d *DeleteBuilder) QueryErr() (string, []any, error) {
 	// BATCH DELETE (YDB-specific)
 	if d.isBatch {
 		if !b.ydb() {
-			b.AddError(fmt.Errorf("BATCH DELETE: unsupported dialect: %q", b.dialect))
+			b.AddError(fmt.Errorf("BATCH DELETE is not supported by %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		if len(d.returning) > 0 {
@@ -1323,6 +1331,8 @@ func (p *Predicate) NotIn(col string, args ...any) *Predicate {
 }
 
 // Exists returns the `Exists` predicate.
+//
+// Note: Correlated subqueries with EXISTS are not supported by YDB
 func Exists(query Querier) *Predicate {
 	return P().Exists(query)
 }
@@ -1338,6 +1348,8 @@ func (p *Predicate) Exists(query Querier) *Predicate {
 }
 
 // NotExists returns the `NotExists` predicate.
+//
+// Note: Correlated subqueries with NOT EXISTS are not supported by YDB
 func NotExists(query Querier) *Predicate {
 	return P().NotExists(query)
 }
@@ -1411,7 +1423,7 @@ func (p *Predicate) escapedLikeFold(col, left, substr, right string) *Predicate 
 			// because this how it is defined in dialect/sql/schema.
 			b.Ident(col).WriteString(" COLLATE utf8mb4_general_ci LIKE ")
 			b.Arg(left + strings.ToLower(w) + right)
-		case dialect.Postgres:
+		case dialect.Postgres, dialect.YDB:
 			b.Ident(col).WriteString(" ILIKE ")
 			b.Arg(left + strings.ToLower(w) + right)
 		default: // SQLite.
@@ -1468,7 +1480,7 @@ func (p *Predicate) ColumnsHasPrefix(col, prefixC string) *Predicate {
 				p.WriteString(" ESCAPE ").Arg("\\")
 			}
 		default:
-			b.AddError(fmt.Errorf("ColumnsHasPrefix: unsupported dialect: %q", p.dialect))
+			b.AddError(fmt.Errorf("ColumnsHasPrefix is not supported by %q", p.dialect))
 		}
 	})
 }
@@ -1815,7 +1827,7 @@ func (s *SelectTable) View(index string) *SelectTable {
 	if s.ydb() {
 		s.index = index
 	} else {
-		s.AddError(fmt.Errorf("VIEW: unsupported dialect: %q", s.dialect))
+		s.AddError(fmt.Errorf("VIEW is not supported by %q", s.dialect))
 	}
 	return s
 }
@@ -2111,9 +2123,13 @@ func (s *Selector) From(t TableView) *Selector {
 
 // AppendFrom appends a new TableView to the `FROM` clause.
 func (s *Selector) AppendFrom(t TableView) *Selector {
-	s.from = append(s.from, t)
-	if st, ok := t.(state); ok {
-		st.SetDialect(s.dialect)
+	if s.ydb() && len(s.from) != 0 {
+		s.AddError(fmt.Errorf("multiple tables after FROM clause is not supported by %q", s.dialect))
+	} else {
+		s.from = append(s.from, t)
+		if st, ok := t.(state); ok {
+			st.SetDialect(s.dialect)
+		}
 	}
 	return s
 }
@@ -2431,17 +2447,22 @@ func (s *Selector) UnionDistinct(t TableView) *Selector {
 
 // Except appends the EXCEPT clause to the query.
 func (s *Selector) Except(t TableView) *Selector {
-	s.setOps = append(s.setOps, setOp{
-		Type:      setOpTypeExcept,
-		TableView: t,
-	})
+	if s.ydb() {
+		s.AddError(fmt.Errorf("EXCEPT is not supported by %q", s.dialect))
+		return s
+	} else {
+		s.setOps = append(s.setOps, setOp{
+			Type:      setOpTypeExcept,
+			TableView: t,
+		})
+	}
 	return s
 }
 
 // ExceptAll appends the EXCEPT ALL clause to the query.
 func (s *Selector) ExceptAll(t TableView) *Selector {
-	if s.sqlite() {
-		s.AddError(errors.New("EXCEPT ALL is not supported by SQLite"))
+	if s.sqlite() || s.ydb() {
+		s.AddError(fmt.Errorf("EXCEPT ALL is not supported by %q", s.dialect))
 	} else {
 		s.setOps = append(s.setOps, setOp{
 			Type:      setOpTypeExcept,
@@ -2454,17 +2475,21 @@ func (s *Selector) ExceptAll(t TableView) *Selector {
 
 // Intersect appends the INTERSECT clause to the query.
 func (s *Selector) Intersect(t TableView) *Selector {
-	s.setOps = append(s.setOps, setOp{
-		Type:      setOpTypeIntersect,
-		TableView: t,
-	})
+	if s.ydb() {
+		s.AddError(fmt.Errorf("INTERSECT is not supported by %q", s.dialect))
+	} else {
+		s.setOps = append(s.setOps, setOp{
+			Type:      setOpTypeIntersect,
+			TableView: t,
+		})
+	}
 	return s
 }
 
 // IntersectAll appends the INTERSECT ALL clause to the query.
 func (s *Selector) IntersectAll(t TableView) *Selector {
-	if s.sqlite() {
-		s.AddError(errors.New("INTERSECT ALL is not supported by SQLite"))
+	if s.sqlite() || s.ydb() {
+		s.AddError(fmt.Errorf("INTERSECT ALL is not supported by %q", s.dialect))
 	} else {
 		s.setOps = append(s.setOps, setOp{
 			Type:      setOpTypeIntersect,
@@ -2616,8 +2641,8 @@ func WithLockClause(clause string) LockOption {
 // For sets the lock configuration for suffixing the `SELECT`
 // statement with the `FOR [SHARE | UPDATE] ...` clause.
 func (s *Selector) For(l LockStrength, opts ...LockOption) *Selector {
-	if s.Dialect() == dialect.SQLite {
-		s.AddError(errors.New("sql: SELECT .. FOR UPDATE/SHARE not supported in SQLite"))
+	if s.sqlite() || s.ydb() {
+		s.AddError(fmt.Errorf("SELECT .. FOR UPDATE/SHARE is not supported by %q", s.dialect))
 	}
 	s.lock = &LockOptions{Strength: l}
 	for _, opt := range opts {
@@ -2754,7 +2779,7 @@ func (s *Selector) AssumeOrderBy(columns ...string) *Selector {
 
 		s.assumeOrder = append(s.assumeOrder, columns...)
 	} else {
-		s.AddError(fmt.Errorf("ASSUME ORDER BY: unsupported dialect: %q", s.dialect))
+		s.AddError(fmt.Errorf("ASSUME ORDER BY is not supported by %q", s.dialect))
 	}
 	return s
 }
