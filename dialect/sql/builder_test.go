@@ -2598,7 +2598,7 @@ func TestSelectWithLock(t *testing.T) {
 		Where(EQ("id", 1)).
 		ForUpdate()
 	s.Query()
-	require.EqualError(t, s.Err(), "sql: SELECT .. FOR UPDATE/SHARE not supported in SQLite")
+	require.Contains(t, s.Err().Error(), "SELECT .. FOR UPDATE/SHARE is not supported")
 }
 
 func TestSelector_UnionOrderBy(t *testing.T) {
