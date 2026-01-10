@@ -71,7 +71,7 @@ func (d *YDB) tableExist(ctx context.Context, conn dialect.ExecQuerier, name str
 func (d *YDB) atOpen(conn dialect.ExecQuerier) (migrate.Driver, error) {
 	ydbDriver, ok := conn.(*entdriver.YDBDriver)
 	if !ok {
-		return nil, fmt.Errorf("Expected dialect/ydb.YDBDriver, but got %T", conn)
+		return nil, fmt.Errorf("expected dialect/ydb.YDBDriver, but got %T", conn)
 	}
 
 	return atlas.Open(
@@ -151,7 +151,7 @@ func (d *YDB) atTypeC(column1 *Column, column2 *schema.Column) error {
 	case field.TypeUUID:
 		typ = &schema.UUIDType{T: atlas.TypeUuid}
 	case field.TypeEnum:
-		err = errors.New("ydb: Enum can't be used as column data types for tables")
+		err = errors.New("ydb: Enum can't be used as column data type for tables")
 	case field.TypeOther:
 		typ = &schema.UnsupportedType{T: column1.typ}
 	default:
