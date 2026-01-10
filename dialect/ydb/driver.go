@@ -32,7 +32,7 @@ func Open(ctx context.Context, dsn string) (*YDBDriver, error) {
 		ydb.WithTablePathPrefix(nativeDriver.Name()),
 	)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
 	dbSQLDriver := sql.OpenDB(conn)
