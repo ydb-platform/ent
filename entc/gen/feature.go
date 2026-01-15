@@ -159,6 +159,15 @@ var (
 		},
 	}
 
+	// FeatureRetryOptions provides a feature-flag for adding retry options to query/mutation builders.
+	// This is primarily useful for databases like YDB that require explicit retry handling.
+	FeatureRetryOptions = Feature{
+		Name:        "sql/retryoptions",
+		Stage:       Experimental,
+		Default:     false,
+		Description: "Adds WithRetryOptions methods to builders for databases that require explicit retry handling (e.g., YDB)",
+	}
+
 	// AllFeatures holds a list of all feature-flags.
 	AllFeatures = []Feature{
 		FeaturePrivacy,
@@ -174,6 +183,7 @@ var (
 		FeatureUpsert,
 		FeatureVersionedMigration,
 		FeatureGlobalID,
+		FeatureRetryOptions,
 	}
 	// allFeatures includes all public and private features.
 	allFeatures = append(AllFeatures, featureMultiSchema)
