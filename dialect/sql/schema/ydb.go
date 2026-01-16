@@ -157,11 +157,11 @@ func (d *YDB) atTypeC(column1 *Column, column2 *schema.Column) error {
 	case field.TypeString:
 		typ = &schema.StringType{T: atlas.TypeUtf8}
 	case field.TypeJSON:
-		typ = &schema.JSONType{T: atlas.TypeJson}
+		typ = &schema.JSONType{T: atlas.TypeJSON}
 	case field.TypeTime:
 		typ = &schema.TimeType{T: atlas.TypeTimestamp}
 	case field.TypeUUID:
-		typ = &schema.UUIDType{T: atlas.TypeUuid}
+		typ = &schema.UUIDType{T: atlas.TypeUUID}
 	case field.TypeEnum:
 		err = errors.New("ydb: Enum can't be used as column data type for tables")
 	case field.TypeOther:
@@ -198,7 +198,7 @@ func (d *YDB) atUniqueC(
 	index := schema.NewUniqueIndex(idxName).AddColumns(column2)
 
 	// Add YDB-specific attribute for GLOBAL SYNC index type.
-	index.AddAttrs(&atlas.YDBIndexAttributes{Global: true, Sync: true})
+	index.AddAttrs(&atlas.IndexAttributes{Global: true, Sync: true})
 
 	table2.AddIndexes(index)
 }
@@ -207,7 +207,11 @@ func (d *YDB) atUniqueC(
 // YDB uses Serial types for auto-increment.
 func (d *YDB) atIncrementC(table *schema.Table, column *schema.Column) {
 	if intType, ok := column.Type.Type.(*schema.IntegerType); ok {
-		column.Type.Type = atlas.SerialFromInt(intType)
+		serial, err := atlas.SerialFromInt(intType)
+		if err != nil {
+			panic(err)
+		}
+		column.Type.Type = serial
 	}
 }
 
@@ -232,7 +236,7 @@ func (d *YDB) atIndex(
 
 	// Set YDB-specific index attributes.
 	// By default, use GLOBAL SYNC for consistency.
-	idxType := &atlas.YDBIndexAttributes{Global: true, Sync: true}
+	idxType := &atlas.IndexAttributes{Global: true, Sync: true}
 
 	// Check for annotation overrides.
 	if index1.Annotation != nil {
