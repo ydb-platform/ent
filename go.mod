@@ -1,6 +1,8 @@
 module entgo.io/ent
 
-go 1.24.0
+go 1.24.9
+
+toolchain go1.24.11
 
 require (
 	ariga.io/atlas v0.36.2-0.20250730182955-2c6300d0a3e1
@@ -15,11 +17,11 @@ require (
 	github.com/modern-go/reflect2 v1.0.2
 	github.com/olekukonko/tablewriter v1.0.8
 	github.com/spf13/cobra v1.7.0
-	github.com/stretchr/testify v1.10.0
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.118.0
+	github.com/stretchr/testify v1.11.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.0
 	go.opencensus.io v0.24.0
-	golang.org/x/sync v0.17.0
-	golang.org/x/tools v0.37.0
+	golang.org/x/sync v0.19.0
+	golang.org/x/tools v0.39.0
 	golang.org/x/tools/go/packages/packagestest v0.1.1-deprecated
 )
 
@@ -48,16 +50,18 @@ require (
 	github.com/sergi/go-diff v1.3.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	github.com/ydb-platform/ydb-go-genproto v0.0.0-20250911135631-b3beddd517d9 // indirect
+	github.com/ydb-platform/ydb-go-genproto v0.0.0-20251222105147-0bf751469a4a // indirect
 	github.com/zclconf/go-cty v1.14.4 // indirect
 	github.com/zclconf/go-cty-yaml v1.1.0 // indirect
-	golang.org/x/mod v0.28.0 // indirect
-	golang.org/x/net v0.46.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
+	golang.org/x/mod v0.30.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/tools/go/expect v0.1.0-deprecated // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
-	google.golang.org/grpc v1.76.0 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
+	google.golang.org/grpc v1.78.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+replace ariga.io/atlas => github.com/LostImagin4tion/atlas v0.0.5
