@@ -24,7 +24,6 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/schema/field"
-	"github.com/ydb-platform/ydb-go-sdk/v3"
 )
 
 // Atlas atlas migration engine.
@@ -633,7 +632,7 @@ func (a *Atlas) create(ctx context.Context, tables ...*Table) (err error) {
 		applier := ApplyFunc(func(ctx context.Context, conn dialect.ExecQuerier, plan *migrate.Plan) error {
 			for _, change := range plan.Changes {
 				err := conn.Exec(
-					ydb.WithQueryMode(ctx, ydb.SchemeQueryMode),
+					ctx,
 					change.Cmd,
 					change.Args,
 					nil,
