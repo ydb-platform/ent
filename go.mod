@@ -64,6 +64,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace ariga.io/atlas => github.com/LostImagin4tion/atlas v0.0.32
-
-replace github.com/ydb-platform/ydb-go-sdk/v3 => github.com/LostImagin4tion/ydb-go-sdk/v3 v3.0.1-lostimagin4tion
+replace ariga.io/atlas => github.com/LostImagin4tion/atlas v0.0.33
