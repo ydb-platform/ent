@@ -6,14 +6,13 @@ package schema
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	entdriver "entgo.io/ent/dialect/ydb"
+	entdrv "entgo.io/ent/dialect/ydb"
 	"entgo.io/ent/schema/field"
 
 	"ariga.io/atlas/sql/migrate"
@@ -34,8 +33,8 @@ func (d *YDB) init(ctx context.Context) error {
 		return nil // already initialized.
 	}
 
-	rows := &sql.Rows{}
-	if err := d.Driver.Query(ctx, "SELECT version()", nil, rows); err != nil {
+	rows := &entsql.Rows{}
+	if err := d.Driver.Query(ctx, "SELECT version()", []any{}, rows); err != nil {
 		return fmt.Errorf("ydb: failed to query version: %w", err)
 	}
 	defer rows.Close()
@@ -69,9 +68,22 @@ func (d *YDB) tableExist(ctx context.Context, conn dialect.ExecQuerier, name str
 
 // atOpen returns a custom Atlas migrate.Driver for YDB.
 func (d *YDB) atOpen(conn dialect.ExecQuerier) (migrate.Driver, error) {
-	ydbDriver, ok := conn.(*entdriver.YDBDriver)
-	if !ok {
-		return nil, fmt.Errorf("expected dialect/ydb.YDBDriver, but got %T", conn)
+	var ydbDriver *entdrv.YDBDriver
+
+	switch drv := conn.(type) {
+	case *entdrv.YDBDriver:
+		ydbDriver = drv
+	case *YDB:
+		if ydb, ok := drv.Driver.(*entdrv.YDBDriver); ok {
+			ydbDriver = ydb
+		}
+	}
+	if ydbDriver == nil {
+		if ydb, ok := d.Driver.(*entdrv.YDBDriver); ok {
+			ydbDriver = ydb
+		} else {
+			return nil, fmt.Errorf("expected dialect/ydb.YDBDriver, but got %T", conn)
+		}
 	}
 
 	return atlas.Open(

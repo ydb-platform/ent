@@ -1699,8 +1699,8 @@ github.com/xlab/treeprint v1.1.0/go.mod h1:gj5Gd3gPdKtR1ikdDK6fnFLdmIS0X30kTTuNd
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/ydb-platform/ydb-go-genproto v0.0.0-20251222105147-0bf751469a4a h1:nRqONRrMFulP2bTWM2RRnPM1VDhWuBZg4ULXkG4xXdk=
 github.com/ydb-platform/ydb-go-genproto v0.0.0-20251222105147-0bf751469a4a/go.mod h1:Er+FePu1dNUieD+XTMDduGpQuCPssK5Q4BjF+IIXJ3I=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.125.0 h1:KPnGV2diuX1A4/1zXLO1UWHJokWC8yICzEfjdkSUWKo=
-github.com/ydb-platform/ydb-go-sdk/v3 v3.125.0/go.mod h1:/LjMxb/rXmoGAAnImoqAFIlhO5ampHacbvDetQitCk4=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.125.4 h1:GAC7qeNgsibEJkUVzV4z06aBnHR4jqfXsFiQtrY40gI=
+github.com/ydb-platform/ydb-go-sdk/v3 v3.125.4/go.mod h1:stS1mQYjbJvwwYaYzKyFY9eMiuVXWWXQA6T+SpOLg9c=
 github.com/youmark/pkcs8 v0.0.0-20181117223130-1be2e3e5546d/go.mod h1:rHwXgn7JulP+udvsHwJoVG1YGAP6VLg4y9I5dyZdqmA=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

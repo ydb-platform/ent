@@ -24,6 +24,7 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	"entgo.io/ent/schema/field"
+	"github.com/ydb-platform/ydb-go-sdk/v3"
 )
 
 // Atlas atlas migration engine.
@@ -626,35 +627,73 @@ func (a *Atlas) create(ctx context.Context, tables ...*Table) (err error) {
 	if len(plan.Changes) == 0 {
 		return nil
 	}
-	// Open a transaction for backwards compatibility,
-	// even if the migration is not transactional.
-	tx, err := a.sqlDialect.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	a.atDriver, err = a.sqlDialect.atOpen(tx)
-	if err != nil {
-		return err
-	}
-	// Apply plan (changes).
-	var applier Applier = ApplyFunc(func(ctx context.Context, tx dialect.ExecQuerier, plan *migrate.Plan) error {
-		for _, c := range plan.Changes {
-			if err := tx.Exec(ctx, c.Cmd, c.Args, nil); err != nil {
-				if c.Comment != "" {
-					err = fmt.Errorf("%s: %w", c.Comment, err)
+
+	// YDB requires DDL operations to be executed outside of transactions.
+	if a.sqlDialect.Dialect() == dialect.YDB {
+		applier := ApplyFunc(func(ctx context.Context, conn dialect.ExecQuerier, plan *migrate.Plan) error {
+			for _, change := range plan.Changes {
+				err := conn.Exec(
+					ydb.WithQueryMode(ctx, ydb.SchemeQueryMode),
+					change.Cmd,
+					change.Args,
+					nil,
+				)
+				if err != nil {
+					return wrapChangeError(change, err)
 				}
-				return err
 			}
+			return nil
+		})
+		if err := a.applyWithHooks(ctx, a.sqlDialect, plan, applier); err != nil {
+			return fmt.Errorf("sql/schema: %w", err)
 		}
 		return nil
-	})
+	} else {
+		// Open a transaction for backwards compatibility,
+		// even if the migration is not transactional.
+		tx, err := a.sqlDialect.Tx(ctx)
+		if err != nil {
+			return err
+		}
+		a.atDriver, err = a.sqlDialect.atOpen(tx)
+		if err != nil {
+			return err
+		}
+		applier := ApplyFunc(func(ctx context.Context, conn dialect.ExecQuerier, plan *migrate.Plan) error {
+			for _, change := range plan.Changes {
+				if err := conn.Exec(ctx, change.Cmd, change.Args, nil); err != nil {
+					return wrapChangeError(change, err)
+				}
+			}
+			return nil
+		})
+		if err := a.applyWithHooks(ctx, tx, plan, applier); err != nil {
+			return errors.Join(fmt.Errorf("sql/schema: %w", err), tx.Rollback())
+		}
+		return tx.Commit()
+	}
+}
+
+// applyWithHooks wraps the given applier with the configured apply hooks and executes it.
+func (a *Atlas) applyWithHooks(
+	ctx context.Context,
+	conn dialect.ExecQuerier,
+	plan *migrate.Plan,
+	base Applier,
+) error {
+	applier := base
 	for i := len(a.applyHook) - 1; i >= 0; i-- {
 		applier = a.applyHook[i](applier)
 	}
-	if err = applier.Apply(ctx, tx, plan); err != nil {
-		return errors.Join(fmt.Errorf("sql/schema: %w", err), tx.Rollback())
+	return applier.Apply(ctx, conn, plan)
+}
+
+// wrapChangeError wraps an error with the change comment if present.
+func wrapChangeError(c *migrate.Change, err error) error {
+	if c.Comment != "" {
+		return fmt.Errorf("%s: %w", c.Comment, err)
 	}
-	return tx.Commit()
+	return err
 }
 
 // For BC reason, we omit the schema qualifier from the migration plan.

@@ -18,7 +18,7 @@ require (
 	github.com/olekukonko/tablewriter v1.0.8
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.11.1
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.0
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.4
 	go.opencensus.io v0.24.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/tools v0.39.0
