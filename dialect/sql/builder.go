@@ -1885,8 +1885,10 @@ type SelectTable struct {
 	name   string
 	schema string
 	quote  bool
-	index  string // YDB-specific: secondary index name for VIEW clause
-	cte    bool   // YDB-specific: marks this as a CTE reference
+
+	// YDB-specific:
+	index string // secondary index name for VIEW clause
+	isCte   bool   // YDB-specific: marks this as a CTE reference
 }
 
 // Table returns a new table selector.
@@ -1962,8 +1964,9 @@ func (s *SelectTable) ref() string {
 	b := &Builder{dialect: s.dialect}
 	b.writeSchema(s.schema)
 
-	// YDB-specific: CTE references require $ prefix and must have an alias
-	if s.cte && b.ydb() {
+	// YDB-specific: CTE references require $ prefix
+	// and should have alias for easy handling
+	if s.isCte && b.ydb() {
 		b.WriteString("$")
 		b.Ident(s.name)
 
@@ -2906,7 +2909,7 @@ func (s *Selector) Having(p *Predicate) *Selector {
 // Query returns query representation of a `SELECT` statement.
 func (s *Selector) Query() (string, []any) {
 	b := s.Builder.clone()
-	// For YDB, mark tables that reference CTEs from the prefix
+	// For YDB, mark tables that reference CTEs
 	if b.ydb() {
 		s.markCteReferences()
 	}
@@ -3020,17 +3023,17 @@ func (s *Selector) markCteReferences() {
 	}
 	// Mark FROM tables
 	for _, from := range s.from {
-		if t, ok := from.(*SelectTable); ok {
-			if _, isCte := cteNames[t.name]; isCte {
-				t.cte = true
+		if table, ok := from.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
 			}
 		}
 	}
 	// Mark JOIN tables
 	for _, join := range s.joins {
-		if t, ok := join.table.(*SelectTable); ok {
-			if _, isCte := cteNames[t.name]; isCte {
-				t.cte = true
+		if table, ok := join.table.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
 			}
 		}
 	}
@@ -3039,9 +3042,9 @@ func (s *Selector) markCteReferences() {
 // collectCteNames returns a set of CTE names from the selector's prefix.
 func (s *Selector) collectCteNames() map[string]any {
 	names := make(map[string]any)
-	for _, p := range s.prefix {
-		if w, ok := p.(*WithBuilder); ok {
-			for _, cte := range w.ctes {
+	for _, prefix := range s.prefix {
+		if with, ok := prefix.(*WithBuilder); ok {
+			for _, cte := range with.ctes {
 				names[cte.name] = struct{}{}
 			}
 		}
@@ -3252,8 +3255,8 @@ func (s *Selector) applyAliasesToOrder() {
 
 // hasSubqueryJoin returns true if any join involves a subquery (Selector).
 func (s *Selector) hasSubqueryJoin() bool {
-	for _, j := range s.joins {
-		if _, ok := j.table.(*Selector); ok {
+	for _, join := range s.joins {
+		if _, ok := join.table.(*Selector); ok {
 			return true
 		}
 	}
@@ -3402,16 +3405,16 @@ func (w *WithBuilder) queryYDB() (string, []any) {
 // markCteReferencesInSelector marks tables in a selector that reference CTEs.
 func (w *WithBuilder) markCteReferencesInSelector(s *Selector, cteNames map[string]struct{}) {
 	for _, from := range s.from {
-		if t, ok := from.(*SelectTable); ok {
-			if _, isCte := cteNames[t.name]; isCte {
-				t.cte = true
+		if table, ok := from.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
 			}
 		}
 	}
 	for _, join := range s.joins {
-		if t, ok := join.table.(*SelectTable); ok {
-			if _, isCte := cteNames[t.name]; isCte {
-				t.cte = true
+		if table, ok := join.table.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
 			}
 		}
 	}
