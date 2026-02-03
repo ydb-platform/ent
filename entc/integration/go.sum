@@ -1,5 +1,4 @@
 ariga.io/atlas-go-sdk v0.6.9 h1:G5OajpcSIrLRMz8VfmMdfkNptlGstiK0zQ0dtuZWBaE=
-ariga.io/atlas-go-sdk v0.6.9 h1:G5OajpcSIrLRMz8VfmMdfkNptlGstiK0zQ0dtuZWBaE=
 ariga.io/atlas-go-sdk v0.6.9/go.mod h1:cFq7bnvHgKTWHCsU46mtkGxdl41rx2o7SjaLoh6cO8M=
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
 cloud.google.com/go v0.34.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
