@@ -1306,7 +1306,13 @@ func (u *updater) node(ctx context.Context, tx dialect.ExecQuerier) error {
 		return err
 	}
 	if !update.Empty() {
-		affected, err := execUpdate(ctx, tx, update, u.Node.ID.Column)
+		var returningColumn string
+		if u.Node.ID != nil {
+			returningColumn = u.Node.ID.Column
+		} else {
+			returningColumn = u.Node.CompositeID[0].Column
+		}
+		affected, err := execUpdate(ctx, tx, update, returningColumn)
 		if err != nil {
 			return err
 		}
@@ -1537,10 +1543,21 @@ func (u *updater) scan(rows *sql.Rows) error {
 func (u *updater) ensureExists(ctx context.Context) error {
 	selector := u.builder.
 		Select().
-		From(u.builder.Table(u.Node.Table).Schema(u.Node.Schema)).
-		Where(sql.EQ(u.Node.ID.Column, u.Node.ID.Value))
+		From(u.builder.Table(u.Node.Table).Schema(u.Node.Schema))
+
+	var idValue any
+	if u.Node.ID != nil {
+		selector.Where(sql.EQ(u.Node.ID.Column, u.Node.ID.Value))
+		idValue = u.Node.ID.Value
+	} else {
+		selector.Where(sql.And(
+			sql.EQ(u.Node.CompositeID[0].Column, u.Node.CompositeID[0].Value),
+			sql.EQ(u.Node.CompositeID[1].Column, u.Node.CompositeID[1].Value),
+		))
+		idValue = []any{u.Node.CompositeID[0].Value, u.Node.CompositeID[1].Value}
+	}
 	u.Predicate(selector)
-	
+
 	var query string
 	var args []any
 
@@ -1557,7 +1574,7 @@ func (u *updater) ensureExists(ctx context.Context) error {
 		return err
 	}
 	if !found {
-		return &NotFoundError{table: u.Node.Table, id: u.Node.ID.Value}
+		return &NotFoundError{table: u.Node.Table, id: idValue}
 	}
 	return nil
 }
@@ -2109,14 +2126,14 @@ func execUpdate(
 		}
 
 		return affected, nil
+	} else {
+		query, args := update.Query()
+		var res sql.Result
+		if err := tx.Exec(ctx, query, args, &res); err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
 	}
-
-	query, args := update.Query()
-	var res sql.Result
-	if err := tx.Exec(ctx, query, args, &res); err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
 }
 
 // isExternalEdge reports if the given edge requires an UPDATE
