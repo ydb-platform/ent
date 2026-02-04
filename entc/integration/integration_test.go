@@ -132,6 +132,29 @@ func TestPostgres(t *testing.T) {
 	}
 }
 
+func TestYDB(t *testing.T) {
+	t.Parallel()
+
+	ydbOpts := enttest.WithMigrateOptions(
+		migrate.WithDropIndex(true),
+		migrate.WithDropColumn(true),
+		migrate.WithForeignKeys(false),
+		sqlschema.WithSkipChanges(sqlschema.ModifyColumn),
+	)
+
+	client := enttest.Open(t, dialect.YDB, "grpc://localhost:2136/local", ydbOpts)
+	client = client.Debug()
+	defer client.Close()
+
+	for _, tt := range tests {
+		name := runtime.FuncForPC(reflect.ValueOf(tt).Pointer()).Name()
+		t.Run(name[strings.LastIndex(name, ".")+1:], func(t *testing.T) {
+			drop(t, client)
+			tt(t, client)
+		})
+	}
+}
+
 var (
 	opts = enttest.WithMigrateOptions(
 		migrate.WithDropIndex(true),
@@ -328,6 +351,10 @@ func Sanity(t *testing.T, client *ent.Client) {
 }
 
 func Upsert(t *testing.T, client *ent.Client) {
+	// YDB's UPSERT has different semantics.
+	// it only resolves conflicts on primary key and replaces the entire row.
+	skip(t, "YDB")
+
 	ctx := context.Background()
 	u := client.User.Create().SetName("Ariel").SetAge(30).SetPhone("0000").SaveX(ctx)
 	require.Equal(t, "static", u.Address, "address was set by default func")
@@ -740,8 +767,21 @@ func Select(t *testing.T, client *ent.Client) {
 				// Append the "users_count" column to the selected columns.
 				AppendSelect(
 					sql.As(sql.Count(t.C(group.UsersPrimaryKey[1])), "users_count"),
-				).
-				GroupBy(s.C(group.FieldID))
+				)
+
+			// YDB requires all non-key and non-aggregated columns to be in GROUP BY
+			if s.Dialect() == dialect.YDB {
+				s.GroupBy(
+					s.C(group.FieldID),
+					s.C(group.FieldActive),
+					s.C(group.FieldExpire),
+					s.C(group.FieldType),
+					s.C(group.FieldMaxUsers),
+					s.C(group.FieldName),
+				)
+			} else {
+				s.GroupBy(s.C(group.FieldID))
+			}
 		}).
 		ScanX(ctx, &gs)
 	require.Len(gs, 2)
@@ -786,7 +826,7 @@ func Select(t *testing.T, client *ent.Client) {
 	// Execute custom update modifier.
 	client.User.Update().
 		Modify(func(u *sql.UpdateBuilder) {
-			u.Set(user.FieldName, sql.Expr(fmt.Sprintf("UPPER(%s)", user.FieldName)))
+			u.Set(user.FieldName, sql.UpperExpr(user.FieldName))
 		}).
 		ExecX(ctx)
 	require.True(allUpper(), "at names must be upper-cased")
@@ -827,8 +867,11 @@ func Select(t *testing.T, client *ent.Client) {
 	}
 
 	// Order by random value should compile a valid query.
-	_, err = client.User.Query().Order(sql.OrderByRand()).All(ctx)
-	require.NoError(err)
+	// YDB doesn't support ORDER BY with constant expressions like Random(seed).
+	if client.Dialect() != dialect.YDB {
+		_, err = client.User.Query().Order(sql.OrderByRand()).All(ctx)
+		require.NoError(err)
+	}
 }
 
 func Aggregate(t *testing.T, client *ent.Client) {
@@ -1069,8 +1112,12 @@ func Delete(t *testing.T, client *ent.Client) {
 
 	info := client.GroupInfo.Create().SetDesc("group info").SaveX(ctx)
 	hub := client.Group.Create().SetInfo(info).SetName("GitHub").SetExpire(time.Now().Add(time.Hour)).SaveX(ctx)
-	err = client.GroupInfo.DeleteOne(info).Exec(ctx)
-	require.True(ent.IsConstraintError(err))
+
+	// YDB doesn't have foreign keys constraints
+	if client.Dialect() != dialect.YDB {
+		err = client.GroupInfo.DeleteOne(info).Exec(ctx)
+		require.True(ent.IsConstraintError(err))
+	}
 
 	// Group.DeleteOneID(id).Where(...), is identical to Group.Delete().Where(group.ID(id), ...),
 	// but, in case the OpDelete is not an allowed operation, the DeleteOne can be used with Where.
@@ -1086,18 +1133,26 @@ func Delete(t *testing.T, client *ent.Client) {
 		Where(group.ExpireLT(time.Now())).
 		Exec(ctx)
 	require.True(ent.IsNotFound(err))
+
 	hub.Update().SetExpire(time.Now().Add(-time.Hour)).ExecX(ctx)
+
 	client.Group.DeleteOne(hub).
 		Where(group.ExpireLT(time.Now())).
 		ExecX(ctx)
 
 	// The behavior described above it also applied to UpdateOne.
-	hub = client.Group.Create().SetInfo(info).SetName("GitHub").SetExpire(time.Now().Add(time.Hour)).SaveX(ctx)
+	hub = client.Group.Create().
+		SetInfo(info).
+		SetName("GitHub").
+		SetExpire(time.Now().Add(time.Hour)).
+		SaveX(ctx)
+
 	err = hub.Update().
 		SetActive(false).
-		SetExpire(time.Time{}).
+		SetExpire(time.Unix(0, 0)).
 		Where(group.ExpireLT(time.Now())). // Expired.
 		Exec(ctx)
+
 	require.True(ent.IsNotFound(err))
 }
 
@@ -1625,13 +1680,22 @@ func UniqueConstraint(t *testing.T, client *ent.Client) {
 	cm1 := client.Comment.Create().SetUniqueInt(42).SetUniqueFloat(math.Pi).SaveX(ctx)
 	err = client.Comment.Create().SetUniqueInt(42).SetUniqueFloat(math.E).Exec(ctx)
 	require.Error(err)
-	err = client.Comment.Create().SetUniqueInt(7).SetUniqueFloat(math.Pi).Exec(ctx)
-	require.Error(err)
+
+	// YDB doesn't support unique indexes on float columns.
+	if client.Dialect() != dialect.YDB {
+		err = client.Comment.Create().SetUniqueInt(7).SetUniqueFloat(math.Pi).Exec(ctx)
+		require.Error(err)
+	}
+
 	client.Comment.Create().SetUniqueInt(7).SetUniqueFloat(math.E).ExecX(ctx)
 	err = cm1.Update().SetUniqueInt(7).Exec(ctx)
 	require.Error(err)
-	err = cm1.Update().SetUniqueFloat(math.E).Exec(ctx)
-	require.Error(err)
+
+	// YDB doesn't support unique indexes on float columns.
+	if client.Dialect() != dialect.YDB {
+		err = cm1.Update().SetUniqueFloat(math.E).Exec(ctx)
+		require.Error(err)
+	}
 
 	t.Log("unique constraint on time fields")
 	now := time.Now()
@@ -1666,7 +1730,7 @@ func Tx(t *testing.T, client *ent.Client) {
 		m.On("onRollback", nil).Once()
 		defer m.AssertExpectations(t)
 		tx.OnRollback(m.rHook())
-		tx.Node.Create().ExecX(ctx)
+		tx.Node.Create().SetValue(0).ExecX(ctx)
 		require.NoError(t, tx.Rollback())
 		require.Zero(t, client.Node.Query().CountX(ctx), "rollback should discard all changes")
 	})
@@ -1683,13 +1747,13 @@ func Tx(t *testing.T, client *ent.Client) {
 				return err
 			})
 		})
-		nde := tx.Node.Create().SaveX(ctx)
+		node := tx.Node.Create().SetValue(0).SaveX(ctx)
 		require.NoError(t, tx.Commit())
 		require.Error(t, tx.Commit(), "should return an error on the second call")
 		require.NotZero(t, client.Node.Query().CountX(ctx), "commit should save all changes")
-		_, err = nde.QueryNext().Count(ctx)
+		_, err = node.QueryNext().Count(ctx)
 		require.Error(t, err, "should not be able to query after tx was closed")
-		require.Zero(t, nde.Unwrap().QueryNext().CountX(ctx), "should be able to query the entity after wrap")
+		require.Zero(t, node.Unwrap().QueryNext().CountX(ctx), "should be able to query the entity after wrap")
 	})
 	t.Run("Nested", func(t *testing.T) {
 		tx, err := client.Tx(ctx)
@@ -1703,8 +1767,19 @@ func Tx(t *testing.T, client *ent.Client) {
 		require.NoError(t, tx.Rollback())
 	})
 	t.Run("TxOptions Rollback", func(t *testing.T) {
-		skip(t, "SQLite")
-		tx, err := client.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		skip(t, "SQLite", "YDB")
+
+		var txOptions sql.TxOptions
+		if client.Dialect() == dialect.YDB {
+			txOptions = sql.TxOptions{
+				Isolation: stdsql.LevelSnapshot,
+				ReadOnly:  true,
+			}
+		} else {
+			txOptions = sql.TxOptions{ReadOnly: true}
+		}
+
+		tx, err := client.BeginTx(ctx, &txOptions)
 		require.NoError(t, err)
 		var m mocker
 		m.On("onRollback", nil).Once()
@@ -1721,10 +1796,38 @@ func Tx(t *testing.T, client *ent.Client) {
 		require.Error(t, err, "expect creation to fail in read-only tx")
 		require.NoError(t, tx.Rollback())
 	})
+	t.Run("YDB TxOptions Rollback", func(t *testing.T) {
+		if client.Dialect() != dialect.YDB {
+			t.Skip("YDB-specific test")
+		}
+
+		tx, err := client.BeginTx(ctx, &sql.TxOptions{
+			Isolation: stdsql.LevelSnapshot,
+			ReadOnly:  true,
+		})
+		require.NoError(t, err)
+
+		err = tx.Item.Create().Exec(ctx)
+		require.Error(t, err, "expect creation to fail in read-only tx")
+
+		// YDB implicitly invalidates transaction so Rollback() should return err
+		err = tx.Rollback()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "Transaction not found")
+	})
 	t.Run("TxOptions Commit", func(t *testing.T) {
 		skip(t, "SQLite")
-		tx, err := client.BeginTx(ctx, &sql.TxOptions{Isolation: stdsql.LevelReadCommitted})
+
+		var txOptions sql.TxOptions
+		if client.Dialect() == dialect.YDB {
+			txOptions = sql.TxOptions{Isolation: stdsql.LevelSerializable}
+		} else {
+			txOptions = sql.TxOptions{Isolation: stdsql.LevelReadCommitted}
+		}
+
+		tx, err := client.BeginTx(ctx, &txOptions)
 		require.NoError(t, err)
+
 		var m mocker
 		m.On("onCommit", nil).Once()
 		defer m.AssertExpectations(t)
@@ -2164,12 +2267,29 @@ func NoSchemaChanges(t *testing.T, client *ent.Client) {
 	})
 	tables, err := sqlschema.CopyTables(migrate.Tables)
 	require.NoError(t, err)
-	err = migrate.Create(
-		context.Background(),
-		migrate.NewSchema(&sqlschema.WriteDriver{Writer: w, Driver: client.Driver()}),
-		tables,
+
+	opts := []sqlschema.MigrateOption{
 		migrate.WithDropIndex(true),
 		migrate.WithDropColumn(true),
+	}
+	if strings.Contains(t.Name(), "YDB") {
+		opts = append(
+			opts,
+			migrate.WithForeignKeys(false),
+			sqlschema.WithSkipChanges(sqlschema.ModifyColumn),
+		)
+	}
+
+	err = migrate.Create(
+		context.Background(),
+		migrate.NewSchema(
+			&sqlschema.WriteDriver{
+				Driver: client.Driver(),
+				Writer: w,
+			},
+		),
+		tables,
+		opts...,
 	)
 	require.NoError(t, err)
 }
@@ -2326,6 +2446,8 @@ func CreateBulk(t *testing.T, client *ent.Client) {
 }
 
 func ConstraintChecks(t *testing.T, client *ent.Client) {
+	skip(t, "YDB")
+
 	var cerr *ent.ConstraintError
 	err := client.Pet.Create().SetName("orphan").SetOwnerID(0).Exec(context.Background())
 	require.True(t, errors.As(err, &cerr))
@@ -2340,7 +2462,7 @@ func ConstraintChecks(t *testing.T, client *ent.Client) {
 }
 
 func Lock(t *testing.T, client *ent.Client) {
-	skip(t, "SQLite", "MySQL/5", "Maria/10.2")
+	skip(t, "SQLite", "MySQL/5", "Maria/10.2", "YDB")
 	ctx := context.Background()
 	xabi := client.Pet.Create().SetName("Xabi").SaveX(ctx)
 
@@ -2399,6 +2521,7 @@ func Lock(t *testing.T, client *ent.Client) {
 }
 
 func ExtValueScan(t *testing.T, client *ent.Client) {
+	skip(t, "YDB")
 	ctx := context.Background()
 	u, err := url.Parse("https://entgo.io")
 	require.NoError(t, err)

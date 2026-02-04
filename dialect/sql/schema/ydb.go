@@ -6,7 +6,6 @@ package schema
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -68,28 +67,32 @@ func (d *YDB) tableExist(ctx context.Context, conn dialect.ExecQuerier, name str
 
 // atOpen returns a custom Atlas migrate.Driver for YDB.
 func (d *YDB) atOpen(conn dialect.ExecQuerier) (migrate.Driver, error) {
-	var ydbDriver *entdrv.YDBDriver
-
-	switch drv := conn.(type) {
-	case *entdrv.YDBDriver:
-		ydbDriver = drv
-	case *YDB:
-		if ydb, ok := drv.Driver.(*entdrv.YDBDriver); ok {
-			ydbDriver = ydb
-		}
+	ydbDriver := unwrapYDBDriver(conn)
+	if ydbDriver == nil {
+		ydbDriver = unwrapYDBDriver(d.Driver)
 	}
 	if ydbDriver == nil {
-		if ydb, ok := d.Driver.(*entdrv.YDBDriver); ok {
-			ydbDriver = ydb
-		} else {
-			return nil, fmt.Errorf("expected dialect/ydb.YDBDriver, but got %T", conn)
-		}
+		return nil, fmt.Errorf("expected dialect/ydb.YDBDriver, but got %T", conn)
 	}
 
 	return atlas.Open(
 		ydbDriver.NativeDriver(),
 		ydbDriver.DB(),
 	)
+}
+
+func unwrapYDBDriver(driver any) *entdrv.YDBDriver {
+	switch drv := driver.(type) {
+	case *entdrv.YDBDriver:
+		return drv
+	case *YDB:
+		return unwrapYDBDriver(drv.Driver)
+	case *WriteDriver:
+		return unwrapYDBDriver(drv.Driver)
+	case *dialect.DebugDriver:
+		return unwrapYDBDriver(drv.Driver)
+	}
+	return nil
 }
 
 func (d *YDB) atTable(table1 *Table, table2 *schema.Table) {
@@ -163,7 +166,9 @@ func (d *YDB) atTypeC(column1 *Column, column2 *schema.Column) error {
 	case field.TypeUUID:
 		typ = &schema.UUIDType{T: atlas.TypeUUID}
 	case field.TypeEnum:
-		err = errors.New("ydb: Enum can't be used as column data type for tables")
+		// YDB doesn't support enum types in DDL statements
+		// But ent can handle enum validation, so we just map it to Utf8
+		typ = &schema.StringType{T: atlas.TypeUtf8}
 	case field.TypeOther:
 		typ = &schema.UnsupportedType{T: column1.typ}
 	default:
@@ -179,13 +184,17 @@ func (d *YDB) atTypeC(column1 *Column, column2 *schema.Column) error {
 }
 
 // atUniqueC adds a unique constraint for a column.
-// In YDB, unique constraints are implemented as GLOBAL UNIQUE SYNC indexes.
+// In YDB, unique constraints are implemented as GLOBAL UNIQUE indexes.
 func (d *YDB) atUniqueC(
 	table1 *Table,
 	column1 *Column,
 	table2 *schema.Table,
 	column2 *schema.Column,
 ) {
+	if !canBeIndexKey(column1) {
+		return
+	}
+
 	// Check if there's already an explicit unique index defined for this column.
 	for _, idx := range table1.Indexes {
 		if idx.Unique && len(idx.Columns) == 1 && idx.Columns[0].Name == column1.Name {
@@ -194,11 +203,8 @@ func (d *YDB) atUniqueC(
 		}
 	}
 	// Create a unique index for this column.
-	idxName := fmt.Sprintf("%s_%s_index", table1.Name, column1.Name)
-	index := schema.NewUniqueIndex(idxName).AddColumns(column2)
-
-	// Add YDB-specific attribute for GLOBAL SYNC index type.
-	index.AddAttrs(&atlas.IndexAttributes{Global: true, Sync: true})
+	indexName := fmt.Sprintf("%s_%s_uniq_idx", table1.Name, column1.Name)
+	index := schema.NewUniqueIndex(indexName).AddParts(&schema.IndexPart{C: column2})
 
 	table2.AddIndexes(index)
 }
@@ -226,34 +232,65 @@ func (d *YDB) atIndex(
 	table2 *schema.Table,
 	index2 *schema.Index,
 ) error {
+	indexColumns := make([]string, 0)
 	for _, column1 := range index1.Columns {
+		if isPrimaryKeyColumn(table2, column1.Name) {
+			continue
+		}
+
 		column2, ok := table2.Column(column1.Name)
 		if !ok {
 			return fmt.Errorf("unexpected index %q column: %q", index1.Name, column1.Name)
 		}
+
+		if !canBeIndexKeyBySchema(column2) {
+			continue
+		}
+
 		index2.AddParts(&schema.IndexPart{C: column2})
+		indexColumns = append(indexColumns, column2.Name)
 	}
 
 	// Set YDB-specific index attributes.
 	// By default, use GLOBAL SYNC for consistency.
-	idxType := &atlas.IndexAttributes{Global: true, Sync: true}
+	idxAttrs := &atlas.IndexAttributes{}
 
-	// Check for annotation overrides.
 	if index1.Annotation != nil {
+		annotation := index1.Annotation
+
+		if len(annotation.IncludeColumns) > 0 {
+			columns := make([]*schema.Column, len(annotation.IncludeColumns))
+
+			for i, include := range annotation.IncludeColumns {
+				column, ok := table2.Column(include)
+				if !ok {
+					return fmt.Errorf("include column %q was not found for index %q", include, index1.Name)
+				}
+				columns[i] = column
+			}
+
+			idxAttrs.CoverColumns = columns
+		}
+
 		if indexType, ok := indexType(index1, dialect.YDB); ok {
-			// Parse YDB-specific index type from annotation.
-			switch strings.ToUpper(indexType) {
-			case "GLOBAL ASYNC", "ASYNC":
-				idxType.Sync = false
-			case "LOCAL":
-				idxType.Global = false
-			case "LOCAL ASYNC":
-				idxType.Global = false
-				idxType.Sync = false
+			upperIndexType := strings.ToUpper(indexType)
+
+			if strings.Contains(upperIndexType, "ASYNC") {
+				idxAttrs.Async = true
+			}
+			if strings.Contains(upperIndexType, "UNIQUE") {
+				index2.Unique = true
 			}
 		}
 	}
-	index2.AddAttrs(idxType)
+
+	index2.Name = fmt.Sprintf(
+		"%s_%s_idx",
+		table2.Name,
+		strings.Join(indexColumns, "_"),
+	)
+
+	index2.AddAttrs(idxAttrs)
 	return nil
 }
 
@@ -268,4 +305,42 @@ func (*YDB) atTypeRangeSQL(ts ...string) string {
 		TypeTable,
 		strings.Join(values, ", "),
 	)
+}
+
+// canBeIndexKey checks if a column type can be used as an index key in YDB.
+// YDB doesn't allow Float/Double types as index keys.
+func canBeIndexKey(column *Column) bool {
+	switch column.Type {
+	case field.TypeFloat32, field.TypeFloat64:
+		return false
+	default:
+		return true
+	}
+}
+
+// canBeIndexKeyBySchema checks if a column type can be used as an index key in YDB
+// by checking the Atlas schema column type.
+func canBeIndexKeyBySchema(column *schema.Column) bool {
+	if column.Type == nil || column.Type.Type == nil {
+		return true
+	}
+	switch column.Type.Type.(type) {
+	case *schema.FloatType:
+		return false
+	default:
+		return true
+	}
+}
+
+// isPrimaryKeyColumn checks if a column is part of the table's primary key.
+func isPrimaryKeyColumn(table *schema.Table, columnName string) bool {
+	if table.PrimaryKey == nil {
+		return false
+	}
+	for _, primaryKeyPart := range table.PrimaryKey.Parts {
+		if primaryKeyPart.C != nil && primaryKeyPart.C.Name == columnName {
+			return true
+		}
+	}
+	return false
 }

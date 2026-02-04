@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"entgo.io/ent/dialect"
 	"entgo.io/ent/entc/integration/ent"
 	"entgo.io/ent/entc/integration/ent/card"
 	"entgo.io/ent/entc/integration/ent/group"
@@ -166,6 +167,12 @@ func O2OSameType(t *testing.T, client *ent.Client) {
 	require.Equal(2, client.Node.Query().CountX(ctx), "linked-list should have 2 nodes")
 
 	t.Log("delete assoc should delete inverse edge")
+
+	// YDB doesn't have FK constraints, manually clear reference before delete.
+	if client.Dialect() == dialect.YDB {
+		sec.Update().ClearPrev().ExecX(ctx)
+	}
+
 	client.Node.DeleteOne(head).ExecX(ctx)
 	require.Zero(sec.QueryPrev().CountX(ctx), "second node should be the head now")
 	require.Zero(sec.QueryNext().CountX(ctx), "second node should be the head now")
@@ -245,16 +252,24 @@ func O2OSameType(t *testing.T, client *ent.Client) {
 	require.Zero(head.QueryNext().QueryNext().Where(node.ValueGT(10)).QueryNext().QueryNext().QueryNext().CountX(ctx))
 
 	t.Log("delete all nodes except the head")
+
+	// YDB doesn't have FK constraints, clear stale reference before delete.
+	if client.Dialect() == dialect.YDB {
+		head.Update().ClearNext().ExecX(ctx)
+	}
+
 	client.Node.Delete().Where(node.ValueGT(1)).ExecX(ctx)
 	head = client.Node.Query().OnlyX(ctx)
 
-	t.Log("node points to itself (circular linked-list with 1 node)")
-	head.Update().SetNext(head).SaveX(ctx)
-	require.Equal(head.ID, head.QueryPrev().OnlyIDX(ctx))
-	require.Equal(head.ID, head.QueryNext().OnlyIDX(ctx))
-	head.Update().ClearNext().SaveX(ctx)
-	require.Zero(head.QueryPrev().CountX(ctx))
-	require.Zero(head.QueryNext().CountX(ctx))
+	if client.Dialect() != dialect.YDB {
+		t.Log("node points to itself (circular linked-list with 1 node)")
+		head.Update().SetNext(head).SaveX(ctx)
+		require.Equal(head.ID, head.QueryPrev().OnlyIDX(ctx))
+		require.Equal(head.ID, head.QueryNext().OnlyIDX(ctx))
+		head.Update().ClearNext().SaveX(ctx)
+		require.Zero(head.QueryPrev().CountX(ctx))
+		require.Zero(head.QueryNext().CountX(ctx))
+	}
 }
 
 // Demonstrate a O2O relation between two instances of the same type, where the relation
@@ -785,6 +800,12 @@ func M2MSelfRef(t *testing.T, client *ent.Client) {
 	require.Equal(2, client.User.Query().Where(user.HasFriends()).CountX(ctx))
 
 	t.Log("delete inverse should delete association")
+
+	// YDB doesn't have FK constraints, manually clear references before delete.
+	if client.Dialect() == dialect.YDB {
+		bar.Update().ClearFriends().ExecX(ctx)
+	}
+
 	client.User.DeleteOne(bar).ExecX(ctx)
 	require.False(foo.QueryFriends().ExistX(ctx))
 	require.Zero(client.User.Query().Where(user.HasFriends()).CountX(ctx))
@@ -925,6 +946,12 @@ func M2MSameType(t *testing.T, client *ent.Client) {
 	require.Equal(1, client.User.Query().Where(user.HasFollowing()).CountX(ctx))
 
 	t.Log("delete inverse should delete association")
+
+	// YDB doesn't have FK constraints, manually clear M2M references before delete.
+	if client.Dialect() == dialect.YDB {
+		bar.Update().ClearFollowing().ExecX(ctx)
+	}
+
 	client.User.DeleteOne(bar).ExecX(ctx)
 	require.False(foo.QueryFollowers().ExistX(ctx))
 	require.Zero(client.User.Query().Where(user.HasFollowers()).CountX(ctx))
@@ -1067,6 +1094,12 @@ func M2MTwoTypes(t *testing.T, client *ent.Client) {
 	require.Equal(1, hub.QueryUsers().CountX(ctx))
 
 	t.Log("delete inverse should delete association")
+
+	// YDB doesn't have FK constraints, manually clear M2M references before delete.
+	if client.Dialect() == dialect.YDB {
+		hub.Update().ClearUsers().ExecX(ctx)
+	}
+
 	client.Group.DeleteOne(hub).ExecX(ctx)
 	require.False(foo.QueryGroups().ExistX(ctx))
 	require.Zero(client.User.Query().Where(user.HasGroups()).CountX(ctx))
@@ -1082,6 +1115,12 @@ func M2MTwoTypes(t *testing.T, client *ent.Client) {
 	require.Equal(1, client.Group.Query().Where(group.HasUsers()).CountX(ctx))
 
 	t.Log("delete assoc should delete inverse as well")
+
+	// YDB doesn't have FK constraints, manually clear M2M references before delete.
+	if client.Dialect() == dialect.YDB {
+		foo.Update().ClearGroups().ExecX(ctx)
+	}
+
 	client.User.DeleteOne(foo).ExecX(ctx)
 	require.False(hub.QueryUsers().ExistX(ctx))
 	require.Zero(client.User.Query().Where(user.HasGroups()).CountX(ctx))

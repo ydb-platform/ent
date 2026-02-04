@@ -162,124 +162,146 @@ func (s *Step) ThroughEdgeTable() bool {
 
 // Neighbors returns a Selector for evaluating the path-step
 // and getting the neighbors of one vertex.
-func Neighbors(dialect string, s *Step) (q *sql.Selector) {
+func Neighbors(dialect string, step *Step) (query *sql.Selector) {
 	builder := sql.Dialect(dialect)
+
 	switch {
-	case s.ThroughEdgeTable():
-		pk1, pk2 := s.Edge.Columns[1], s.Edge.Columns[0]
-		if s.Edge.Inverse {
-			pk1, pk2 = pk2, pk1
+	case step.ThroughEdgeTable():
+		pk1, pk2 := step.Edge.Columns[0], step.Edge.Columns[1]
+		if step.Edge.Inverse {
+			pk2, pk1 = pk1, pk2
 		}
-		to := builder.Table(s.To.Table).Schema(s.To.Schema)
-		join := builder.Table(s.Edge.Table).Schema(s.Edge.Schema)
-		match := builder.Select(join.C(pk1)).
+
+		to := builder.Table(step.To.Table).Schema(step.To.Schema)
+		join := builder.Table(step.Edge.Table).Schema(step.Edge.Schema)
+
+		match := builder.Select(join.C(pk2)).
 			From(join).
-			Where(sql.EQ(join.C(pk2), s.From.V))
-		q = builder.Select().
+			Where(sql.EQ(join.C(pk1), step.From.V))
+
+		query = builder.Select().
 			From(to).
 			Join(match).
-			On(to.C(s.To.Column), match.C(pk1))
-	case s.FromEdgeOwner():
-		t1 := builder.Table(s.To.Table).Schema(s.To.Schema)
-		t2 := builder.Select(s.Edge.Columns[0]).
-			From(builder.Table(s.Edge.Table).Schema(s.Edge.Schema)).
-			Where(sql.EQ(s.From.Column, s.From.V))
-		q = builder.Select().
-			From(t1).
-			Join(t2).
-			On(t1.C(s.To.Column), t2.C(s.Edge.Columns[0]))
-	case s.ToEdgeOwner():
-		q = builder.Select().
-			From(builder.Table(s.To.Table).Schema(s.To.Schema)).
-			Where(sql.EQ(s.Edge.Columns[0], s.From.V))
+			On(to.C(step.To.Column), match.C(pk2))
+
+	case step.FromEdgeOwner():
+		table1 := builder.Table(step.To.Table).Schema(step.To.Schema)
+
+		table2 := builder.Select(step.Edge.Columns[0]).
+			From(builder.Table(step.Edge.Table).Schema(step.Edge.Schema)).
+			Where(sql.EQ(step.From.Column, step.From.V))
+
+		query = builder.Select().
+			From(table1).
+			Join(table2).
+			On(table1.C(step.To.Column), table2.C(step.Edge.Columns[0]))
+
+	case step.ToEdgeOwner():
+		query = builder.Select().
+			From(builder.Table(step.To.Table).Schema(step.To.Schema)).
+			Where(sql.EQ(step.Edge.Columns[0], step.From.V))
 	}
-	return q
+	return query
 }
 
 // SetNeighbors returns a Selector for evaluating the path-step
 // and getting the neighbors of set of vertices.
-func SetNeighbors(dialect string, s *Step) (q *sql.Selector) {
-	set := s.From.V.(*sql.Selector)
+func SetNeighbors(dialect string, step *Step) (query *sql.Selector) {
+	set := step.From.V.(*sql.Selector)
 	builder := sql.Dialect(dialect)
+
 	switch {
-	case s.ThroughEdgeTable():
-		pk1, pk2 := s.Edge.Columns[1], s.Edge.Columns[0]
-		if s.Edge.Inverse {
-			pk1, pk2 = pk2, pk1
+	case step.ThroughEdgeTable():
+		pk1, pk2 := step.Edge.Columns[0], step.Edge.Columns[1]
+		if step.Edge.Inverse {
+			pk2, pk1 = pk1, pk2
 		}
-		to := builder.Table(s.To.Table).Schema(s.To.Schema)
-		set.Select(set.C(s.From.Column))
-		join := builder.Table(s.Edge.Table).Schema(s.Edge.Schema)
-		match := builder.Select(join.C(pk1)).
+
+		to := builder.Table(step.To.Table).Schema(step.To.Schema)
+		join := builder.Table(step.Edge.Table).Schema(step.Edge.Schema)
+
+		set.Select(set.C(step.From.Column))
+
+		match := builder.Select(join.C(pk2)).
 			From(join).
 			Join(set).
-			On(join.C(pk2), set.C(s.From.Column))
-		q = builder.Select().
+			On(join.C(pk1), set.C(step.From.Column))
+
+		query = builder.Select().
 			From(to).
 			Join(match).
-			On(to.C(s.To.Column), match.C(pk1))
-	case s.FromEdgeOwner():
-		t1 := builder.Table(s.To.Table).Schema(s.To.Schema)
-		set.Select(set.C(s.Edge.Columns[0]))
-		q = builder.Select().
-			From(t1).
+			On(to.C(step.To.Column), match.C(pk2))
+
+	case step.FromEdgeOwner():
+		table1 := builder.Table(step.To.Table).Schema(step.To.Schema)
+		set.Select(set.C(step.Edge.Columns[0]))
+
+		query = builder.Select().
+			From(table1).
 			Join(set).
-			On(t1.C(s.To.Column), set.C(s.Edge.Columns[0]))
-	case s.ToEdgeOwner():
-		t1 := builder.Table(s.To.Table).Schema(s.To.Schema)
-		set.Select(set.C(s.From.Column))
-		q = builder.Select().
-			From(t1).
+			On(table1.C(step.To.Column), set.C(step.Edge.Columns[0]))
+
+	case step.ToEdgeOwner():
+		table1 := builder.Table(step.To.Table).Schema(step.To.Schema)
+		set.Select(set.C(step.From.Column))
+
+		query = builder.Select().
+			From(table1).
 			Join(set).
-			On(t1.C(s.Edge.Columns[0]), set.C(s.From.Column))
+			On(table1.C(step.Edge.Columns[0]), set.C(step.From.Column))
 	}
-	return q
+	return query
 }
 
 // HasNeighbors applies on the given Selector a neighbors check.
-func HasNeighbors(q *sql.Selector, s *Step) {
-	builder := sql.Dialect(q.Dialect())
+func HasNeighbors(query *sql.Selector, step *Step) {
+	builder := sql.Dialect(query.Dialect())
+
 	switch {
-	case s.ThroughEdgeTable():
-		pk1 := s.Edge.Columns[0]
-		if s.Edge.Inverse {
-			pk1 = s.Edge.Columns[1]
+	case step.ThroughEdgeTable():
+		pk1 := step.Edge.Columns[0]
+		if step.Edge.Inverse {
+			pk1 = step.Edge.Columns[1]
 		}
-		join := builder.Table(s.Edge.Table).Schema(s.Edge.Schema)
-		q.Where(
+
+		join := builder.Table(step.Edge.Table).Schema(step.Edge.Schema)
+		query.Where(
 			sql.In(
-				q.C(s.From.Column),
+				query.C(step.From.Column),
 				builder.Select(join.C(pk1)).From(join),
 			),
 		)
-	case s.FromEdgeOwner():
-		q.Where(sql.NotNull(q.C(s.Edge.Columns[0])))
-	case s.ToEdgeOwner():
-		to := builder.Table(s.Edge.Table).Schema(s.Edge.Schema)
+
+	case step.FromEdgeOwner():
+		query.Where(sql.NotNull(query.C(step.Edge.Columns[0])))
+
+	case step.ToEdgeOwner():
+		to := builder.Table(step.Edge.Table).Schema(step.Edge.Schema)
 		// In case the edge reside on the same table, give
 		// the edge an alias to make qualifier different.
-		if s.From.Table == s.Edge.Table {
-			to.As(fmt.Sprintf("%s_edge", s.Edge.Table))
+		if step.From.Table == step.Edge.Table {
+			to.As(fmt.Sprintf("%s_edge", step.Edge.Table))
 		}
-		
-		// YDB doesn't support correlated EXISTS subqueries.
-		// Use IN subquery instead for YDB dialect.
-		if q.Dialect() == dialect.YDB {
-			q.Where(
+
+		if query.Dialect() == dialect.YDB {
+			// YDB doesn't support correlated subqueries, use IN with subquery instead.
+			query.Where(
 				sql.In(
-					q.C(s.From.Column),
-					builder.Select(to.C(s.Edge.Columns[0])).From(to),
+					query.C(step.From.Column),
+					builder.Select(to.C(step.Edge.Columns[0])).
+						From(to).
+						Where(sql.NotNull(to.C(step.Edge.Columns[0]))),
 				),
 			)
 		} else {
-			q.Where(
+			query.Where(
 				sql.Exists(
-					builder.Select(to.C(s.Edge.Columns[0])).
+					builder.Select(to.C(step.Edge.Columns[0])).
 						From(to).
 						Where(
 							sql.ColumnsEQ(
-								q.C(s.From.Column),
-								to.C(s.Edge.Columns[0]),
+								query.C(step.From.Column),
+								to.C(step.Edge.Columns[0]),
 							),
 						),
 				),
@@ -290,98 +312,105 @@ func HasNeighbors(q *sql.Selector, s *Step) {
 
 // HasNeighborsWith applies on the given Selector a neighbors check.
 // The given predicate applies its filtering on the selector.
-func HasNeighborsWith(q *sql.Selector, s *Step, pred func(*sql.Selector)) {
-	builder := sql.Dialect(q.Dialect())
+func HasNeighborsWith(
+	query *sql.Selector,
+	step *Step,
+	predicate func(*sql.Selector),
+) {
+	builder := sql.Dialect(query.Dialect())
+
 	switch {
-	case s.ThroughEdgeTable():
-		pk1, pk2 := s.Edge.Columns[1], s.Edge.Columns[0]
-		if s.Edge.Inverse {
-			pk1, pk2 = pk2, pk1
+	case step.ThroughEdgeTable():
+		pk1, pk2 := step.Edge.Columns[0], step.Edge.Columns[1]
+		if step.Edge.Inverse {
+			pk2, pk1 = pk1, pk2
 		}
-		to := builder.Table(s.To.Table).Schema(s.To.Schema)
-		edge := builder.Table(s.Edge.Table).Schema(s.Edge.Schema)
-		join := builder.Select(edge.C(pk2)).
+
+		to := builder.Table(step.To.Table).Schema(step.To.Schema)
+		edge := builder.Table(step.Edge.Table).Schema(step.Edge.Schema)
+
+		join := builder.Select(edge.C(pk1)).
 			From(edge).
 			Join(to).
-			On(edge.C(pk1), to.C(s.To.Column))
+			On(edge.C(pk2), to.C(step.To.Column))
+
 		matches := builder.Select().From(to)
-		matches.WithContext(q.Context())
-		pred(matches)
+		matches.WithContext(query.Context())
+		predicate(matches)
 		join.FromSelect(matches)
-		q.Where(sql.In(q.C(s.From.Column), join))
 
-	case s.FromEdgeOwner():
-		to := builder.Table(s.To.Table).Schema(s.To.Schema)
+		query.Where(sql.In(query.C(step.From.Column), join))
+
+	case step.FromEdgeOwner():
+		to := builder.Table(step.To.Table).Schema(step.To.Schema)
 		// Avoid ambiguity in case both source
 		// and edge tables are the same.
-		if s.To.Table == q.TableName() {
-			to.As(fmt.Sprintf("%s_edge", s.To.Table))
+		if step.To.Table == query.TableName() {
+			to.As(fmt.Sprintf("%s_edge", step.To.Table))
 			// Choose the alias name until we do not
 			// have a collision. Limit to 5 iterations.
 			for i := 1; i <= 5; i++ {
-				if to.C("c") != q.C("c") {
+				if to.C("c") != query.C("c") {
 					break
 				}
-				to.As(fmt.Sprintf("%s_edge_%d", s.To.Table, i))
+				to.As(fmt.Sprintf("%s_edge_%d", step.To.Table, i))
 			}
 		}
 
-		// YDB doesn't support correlated EXISTS subqueries.
-		// Use IN subquery instead for YDB dialect.
-		if q.Dialect() == dialect.YDB {
-			matches := builder.Select(to.C(s.To.Column)).From(to)
-			matches.WithContext(q.Context())
-			pred(matches)
-			q.Where(sql.In(q.C(s.Edge.Columns[0]), matches))
+		if query.Dialect() == dialect.YDB {
+			// YDB doesn't support correlated subqueries, use IN with subquery instead
+			matches := builder.Select(to.C(step.To.Column)).From(to)
+			matches.WithContext(query.Context())
+			predicate(matches)
+			query.Where(sql.In(query.C(step.Edge.Columns[0]), matches))
 		} else {
-			matches := builder.Select(to.C(s.To.Column)).
+			matches := builder.Select(to.C(step.To.Column)).
 				From(to)
-			matches.WithContext(q.Context())
+			matches.WithContext(query.Context())
 			matches.Where(
 				sql.ColumnsEQ(
-					q.C(s.Edge.Columns[0]),
-					to.C(s.To.Column),
+					query.C(step.Edge.Columns[0]),
+					to.C(step.To.Column),
 				),
 			)
-			pred(matches)
-			q.Where(sql.Exists(matches))
+			predicate(matches)
+			query.Where(sql.Exists(matches))
 		}
 
-	case s.ToEdgeOwner():
-		to := builder.Table(s.Edge.Table).Schema(s.Edge.Schema)
+	case step.ToEdgeOwner():
+		to := builder.Table(step.Edge.Table).Schema(step.Edge.Schema)
 		// Avoid ambiguity in case both source
 		// and edge tables are the same.
-		if s.Edge.Table == q.TableName() {
-			to.As(fmt.Sprintf("%s_edge", s.Edge.Table))
+		if step.Edge.Table == query.TableName() {
+			to.As(fmt.Sprintf("%s_edge", step.Edge.Table))
 			// Choose the alias name until we do not
 			// have a collision. Limit to 5 iterations.
 			for i := 1; i <= 5; i++ {
-				if to.C("c") != q.C("c") {
+				if to.C("c") != query.C("c") {
 					break
 				}
-				to.As(fmt.Sprintf("%s_edge_%d", s.Edge.Table, i))
+				to.As(fmt.Sprintf("%s_edge_%d", step.Edge.Table, i))
 			}
 		}
-		
-		// YDB doesn't support correlated EXISTS subqueries.
-		// Use IN subquery instead for YDB dialect.
-		if q.Dialect() == dialect.YDB {
-			matches := builder.Select(to.C(s.Edge.Columns[0])).From(to)
-			matches.WithContext(q.Context())
-			pred(matches)
-			q.Where(sql.In(q.C(s.From.Column), matches))
+
+		if query.Dialect() == dialect.YDB {
+			// YDB doesn't support correlated subqueries, using IN with subquery instead
+			matches := builder.Select(to.C(step.Edge.Columns[0])).From(to)
+			matches.WithContext(query.Context())
+			predicate(matches)
+			query.Where(sql.In(query.C(step.From.Column), matches))
 		} else {
-			matches := builder.Select(to.C(s.Edge.Columns[0])).
+			matches := builder.Select(to.C(step.Edge.Columns[0])).
 				From(to)
-			matches.WithContext(q.Context())
+			matches.WithContext(query.Context())
 			matches.Where(
 				sql.ColumnsEQ(
-					q.C(s.From.Column),
-					to.C(s.Edge.Columns[0]),
+					query.C(step.From.Column),
+					to.C(step.Edge.Columns[0]),
 				),
 			)
-			pred(matches)
-			q.Where(sql.Exists(matches))
+			predicate(matches)
+			query.Where(sql.Exists(matches))
 		}
 	}
 }
@@ -573,11 +602,12 @@ func OrderByNeighborTerms(q *sql.Selector, s *Step, opts ...sql.OrderTerm) {
 		}
 		toT := build.Table(s.To.Table).Schema(s.To.Schema)
 		joinT := build.Table(s.Edge.Table).Schema(s.Edge.Schema)
-		join = build.Select(pk2).
+		join = build.SelectExpr().
 			From(toT).
 			Join(joinT).
-			On(toT.C(s.To.Column), joinT.C(pk1)).
-			GroupBy(pk2)
+			On(toT.C(s.To.Column), joinT.C(pk1))
+		join.AppendSelect(joinT.C(pk2)).
+			GroupBy(joinT.C(pk2))
 		selectTerms(join, opts)
 		q.LeftJoin(join).
 			On(q.C(s.From.Column), join.C(pk2))
@@ -965,17 +995,32 @@ func NewDeleteSpec(table string, id *FieldSpec) *DeleteSpec {
 func DeleteNodes(ctx context.Context, drv dialect.Driver, spec *DeleteSpec) (int, error) {
 	var affected int
 	op := func(ctx context.Context, d dialect.Driver) error {
-		var (
-			res     sql.Result
-			builder = sql.Dialect(drv.Dialect())
-		)
+		builder := sql.Dialect(drv.Dialect())
 		selector := builder.Select().
 			From(builder.Table(spec.Node.Table).Schema(spec.Node.Schema)).
 			WithContext(ctx)
 		if pred := spec.Predicate; pred != nil {
 			pred(selector)
 		}
-		query, args := builder.Delete(spec.Node.Table).Schema(spec.Node.Schema).FromSelect(selector).Query()
+		delete := builder.Delete(spec.Node.Table).Schema(spec.Node.Schema).FromSelect(selector)
+
+		// YDB doesn't return accurate RowsAffected(), so we use RETURNING to count deleted rows.
+		if drv.Dialect() == dialect.YDB {
+			delete.Returning(spec.Node.ID.Column)
+			query, args := delete.Query()
+			rows := &sql.Rows{}
+			if err := d.Query(ctx, query, args, rows); err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				affected++
+			}
+			return rows.Err()
+		}
+
+		query, args := delete.Query()
+		var res sql.Result
 		if err := d.Exec(ctx, query, args, &res); err != nil {
 			return err
 		}
@@ -1261,12 +1306,13 @@ func (u *updater) node(ctx context.Context, tx dialect.ExecQuerier) error {
 		return err
 	}
 	if !update.Empty() {
-		var res sql.Result
-		query, args := update.Query()
-		if err := tx.Exec(ctx, query, args, &res); err != nil {
-			return err
+		var returningColumn string
+		if u.Node.ID != nil {
+			returningColumn = u.Node.ID.Column
+		} else {
+			returningColumn = u.Node.CompositeID[0].Column
 		}
-		affected, err := res.RowsAffected()
+		affected, err := execUpdate(ctx, tx, update, returningColumn)
 		if err != nil {
 			return err
 		}
@@ -1497,45 +1543,38 @@ func (u *updater) scan(rows *sql.Rows) error {
 func (u *updater) ensureExists(ctx context.Context) error {
 	selector := u.builder.
 		Select().
-		From(u.builder.Table(u.Node.Table).Schema(u.Node.Schema)).
-		Where(sql.EQ(u.Node.ID.Column, u.Node.ID.Value))
+		From(u.builder.Table(u.Node.Table).Schema(u.Node.Schema))
+
+	var idValue any
+	if u.Node.ID != nil {
+		selector.Where(sql.EQ(u.Node.ID.Column, u.Node.ID.Value))
+		idValue = u.Node.ID.Value
+	} else {
+		selector.Where(sql.And(
+			sql.EQ(u.Node.CompositeID[0].Column, u.Node.CompositeID[0].Value),
+			sql.EQ(u.Node.CompositeID[1].Column, u.Node.CompositeID[1].Value),
+		))
+		idValue = []any{u.Node.CompositeID[0].Value, u.Node.CompositeID[1].Value}
+	}
 	u.Predicate(selector)
-	
+
 	var query string
 	var args []any
-	
-	// YDB doesn't fully support EXISTS in all contexts.
-	// Use COUNT(*) > 0 approach instead for better compatibility.
-	if selector.Dialect() == dialect.YDB {
-		selector.Count("*")
-		query, args = selector.Query()
-	} else {
-		query, args = u.builder.SelectExpr(sql.Exists(selector)).Query()
-	}
-	
+
+	query, args = u.builder.SelectExpr(sql.Exists(selector)).Query()
+
 	rows := &sql.Rows{}
 	if err := u.tx.Query(ctx, query, args, rows); err != nil {
 		return err
 	}
 	defer rows.Close()
-	
-	var found bool
-	if selector.Dialect() == dialect.YDB {
-		count, err := sql.ScanInt(rows)
-		if err != nil {
-			return err
-		}
-		found = count > 0
-	} else {
-		var err error
-		found, err = sql.ScanBool(rows)
-		if err != nil {
-			return err
-		}
+
+	found, err := sql.ScanBool(rows)
+	if err != nil {
+		return err
 	}
-	
 	if !found {
-		return &NotFoundError{table: u.Node.Table, id: u.Node.ID.Value}
+		return &NotFoundError{table: u.Node.Table, id: idValue}
 	}
 	return nil
 }
@@ -1548,8 +1587,19 @@ type creator struct {
 func (c *creator) node(ctx context.Context, drv dialect.Driver) error {
 	var (
 		edges  = EdgeSpecs(c.Edges).GroupRel()
-		insert = c.builder.Insert(c.Table).Schema(c.Schema).Default()
+		insert *sql.InsertBuilder
 	)
+
+	if c.builder.Dialect() == dialect.YDB {
+		// For YDB: use UPSERT only when OnConflict options are specified,
+		if len(c.CreateSpec.OnConflict) > 0 {
+			insert = c.builder.Upsert(c.Table).Schema(c.Schema)
+		} else {
+			insert = c.builder.Insert(c.Table).Schema(c.Schema)
+		}
+	} else {
+		insert = c.builder.Insert(c.Table).Schema(c.Schema).Default()
+	}
 	if err := c.setTableColumns(insert, edges); err != nil {
 		return err
 	}
@@ -1623,6 +1673,10 @@ func (c *creator) insert(ctx context.Context, insert *sql.InsertBuilder) error {
 
 // ensureConflict ensures the ON CONFLICT is added to the insert statement.
 func (c *creator) ensureConflict(insert *sql.InsertBuilder) {
+	// YDB doesn't support ON CONFLICT clause - UPSERT handles conflicts implicitly.
+	if insert.Dialect() == dialect.YDB {
+		return
+	}
 	if opts := c.CreateSpec.OnConflict; len(opts) > 0 {
 		insert.OnConflict(opts...)
 		c.ensureLastInsertID(insert)
@@ -1689,7 +1743,19 @@ func (c *batchCreator) nodes(ctx context.Context, drv dialect.Driver) error {
 		}
 	}
 	sorted := keys(columns)
-	insert := c.builder.Insert(c.Nodes[0].Table).Schema(c.Nodes[0].Schema).Default().Columns(sorted...)
+
+	var insert *sql.InsertBuilder
+	if c.builder.Dialect() == dialect.YDB {
+		// For YDB: use UPSERT only when OnConflict options are specified,
+		if len(c.BatchCreateSpec.OnConflict) > 0 {
+			insert = c.builder.Upsert(c.Nodes[0].Table).Schema(c.Nodes[0].Schema).Columns(sorted...)
+		} else {
+			insert = c.builder.Insert(c.Nodes[0].Table).Schema(c.Nodes[0].Schema).Columns(sorted...)
+		}
+	} else {
+		insert = c.builder.Insert(c.Nodes[0].Table).Schema(c.Nodes[0].Schema).Default().Columns(sorted...)
+	}
+
 	for i := range values {
 		vs := make([]any, len(sorted))
 		for j, c := range sorted {
@@ -1751,6 +1817,10 @@ func (c *batchCreator) batchInsert(ctx context.Context, tx dialect.ExecQuerier, 
 
 // ensureConflict ensures the ON CONFLICT is added to the insert statement.
 func (c *batchCreator) ensureConflict(insert *sql.InsertBuilder) {
+	// YDB doesn't support ON CONFLICT clause - UPSERT handles conflicts implicitly.
+	if insert.Dialect() == dialect.YDB {
+		return
+	}
 	if opts := c.BatchCreateSpec.OnConflict; len(opts) > 0 {
 		insert.OnConflict(opts...)
 	}
@@ -1854,7 +1924,15 @@ func (g *graph) addM2MEdges(ctx context.Context, ids []driver.Value, edges EdgeS
 			values = append(values, f.Value)
 			columns = append(columns, f.Column)
 		}
-		insert := g.builder.Insert(table).Columns(columns...)
+
+		// YDB doesn't support ON CONFLICT clause. Use UPSERT for M2M edges without extra fields
+		var insert *sql.InsertBuilder
+		if len(edges[0].Target.Fields) == 0 && g.builder.Dialect() == dialect.YDB {
+			insert = g.builder.Upsert(table).Columns(columns...)
+		} else {
+			insert = g.builder.Insert(table).Columns(columns...)
+		}
+
 		if edges[0].Schema != "" {
 			// If the Schema field was provided to the EdgeSpec (by the
 			// generated code), it should be the same for all EdgeSpecs.
@@ -1902,7 +1980,14 @@ func (g *graph) batchAddM2M(ctx context.Context, spec *BatchCreateSpec) error {
 				for _, f := range edge.Target.Fields {
 					columns = append(columns, f.Column)
 				}
-				insert = g.builder.Insert(name).Columns(columns...)
+
+				// YDB doesn't support ON CONFLICT clause. Use UPSERT for M2M edges without extra fields.
+				if len(edge.Target.Fields) == 0 && g.builder.Dialect() == dialect.YDB {
+					insert = g.builder.Upsert(name).Columns(columns...)
+				} else {
+					insert = g.builder.Insert(name).Columns(columns...)
+				}
+
 				if edge.Schema != "" {
 					// If the Schema field was provided to the EdgeSpec (by the
 					// generated code), it should be the same for all EdgeSpecs.
@@ -1976,19 +2061,17 @@ func (g *graph) addFKEdges(ctx context.Context, ids []driver.Value, edges []*Edg
 		if len(edge.Target.Nodes) > 1 {
 			p = sql.InValues(edge.Target.IDSpec.Column, edge.Target.Nodes...)
 		}
-		query, args := g.builder.Update(edge.Table).
+
+		update := g.builder.Update(edge.Table).
 			Schema(edge.Schema).
 			Set(edge.Columns[0], id).
-			Where(sql.And(p, sql.IsNull(edge.Columns[0]))).
-			Query()
-		var res sql.Result
-		if err := g.tx.Exec(ctx, query, args, &res); err != nil {
+			Where(sql.And(p, sql.IsNull(edge.Columns[0])))
+
+		affected, err := execUpdate(ctx, g.tx, update, edge.Target.IDSpec.Column)
+		if err != nil {
 			return fmt.Errorf("add %s edge for table %s: %w", edge.Rel, edge.Table, err)
 		}
-		affected, err := res.RowsAffected()
-		if err != nil {
-			return err
-		}
+
 		// Setting the FK value of the "other" table without clearing it before, is not allowed.
 		// Including no-op (same id), because we rely on "affected" to determine if the FK set.
 		if ids := edge.Target.Nodes; int(affected) < len(ids) {
@@ -2013,6 +2096,44 @@ func hasExternalEdges(addEdges, clearEdges map[Rel][]*EdgeSpec) bool {
 		}
 	}
 	return false
+}
+
+// execUpdate executes an UPDATE and returns the number of affected rows.
+// For YDB, it uses RETURNING clause since RowsAffected() is unreliable.
+func execUpdate(
+	ctx context.Context,
+	tx dialect.ExecQuerier,
+	update *sql.UpdateBuilder,
+	returningColumn string,
+) (int64, error) {
+	if update.Dialect() == dialect.YDB {
+		update.Returning(returningColumn)
+
+		query, args := update.Query()
+		rows := &sql.Rows{}
+		if err := tx.Query(ctx, query, args, rows); err != nil {
+			return 0, err
+		}
+		defer rows.Close()
+
+		var affected int64
+		for rows.Next() {
+			affected++
+		}
+
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+
+		return affected, nil
+	} else {
+		query, args := update.Query()
+		var res sql.Result
+		if err := tx.Exec(ctx, query, args, &res); err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
 }
 
 // isExternalEdge reports if the given edge requires an UPDATE
