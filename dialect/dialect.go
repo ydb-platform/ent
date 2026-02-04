@@ -88,6 +88,11 @@ func DebugWithContext(d Driver, logger func(context.Context, ...any)) Driver {
 	return drv
 }
 
+// Log returns the log function used by this DebugDriver.
+func (d *DebugDriver) Log() func(context.Context, ...any) {
+	return d.log
+}
+
 // Exec logs its params and calls the underlying driver Exec method.
 func (d *DebugDriver) Exec(ctx context.Context, query string, args, v any) error {
 	d.log(ctx, fmt.Sprintf("driver.Exec: query=%v args=%v", query, args))

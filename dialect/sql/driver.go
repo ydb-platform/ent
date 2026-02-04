@@ -14,31 +14,75 @@ import (
 	"strings"
 
 	"entgo.io/ent/dialect"
+	"github.com/ydb-platform/ydb-go-sdk/v3"
 )
 
 // Driver is a dialect.Driver implementation for SQL based databases.
 type Driver struct {
 	Conn
-	dialect string
+	dialect       string
+	retryExecutor RetryExecutor
 }
 
 // NewDriver creates a new Driver with the given Conn and dialect.
-func NewDriver(dialect string, c Conn) *Driver {
-	return &Driver{dialect: dialect, Conn: c}
+func NewDriver(
+	dialect string,
+	c Conn,
+	retryExecutor RetryExecutor,
+) *Driver {
+	return &Driver{
+		Conn:          c,
+		dialect:       dialect,
+		retryExecutor: retryExecutor,
+	}
 }
 
 // Open wraps the database/sql.Open method and returns a dialect.Driver that implements the an ent/dialect.Driver interface.
-func Open(dialect, source string) (*Driver, error) {
-	db, err := sql.Open(dialect, source)
+func Open(sqlDialect, dsn string) (*Driver, error) {
+	var (
+		db  *sql.DB
+		err error
+	)
+
+	if sqlDialect == dialect.YDB {
+		nativeDriver, err := ydb.Open(context.Background(), dsn)
+		if err != nil {
+			return nil, err
+		}
+
+		conn, err := ydb.Connector(
+			nativeDriver,
+			ydb.WithAutoDeclare(),
+			ydb.WithTablePathPrefix(nativeDriver.Name()),
+			ydb.WithQueryService(true),
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		db = sql.OpenDB(conn)
+	} else {
+		db, err = sql.Open(sqlDialect, dsn)
+	}
+
 	if err != nil {
 		return nil, err
 	}
-	return NewDriver(dialect, Conn{db, dialect}), nil
+
+	return NewDriver(
+		sqlDialect,
+		Conn{db, sqlDialect},
+		NewRetryExecutor(sqlDialect, db),
+	), nil
 }
 
 // OpenDB wraps the given database/sql.DB method with a Driver.
-func OpenDB(dialect string, db *sql.DB) *Driver {
-	return NewDriver(dialect, Conn{db, dialect})
+func OpenDB(sqlDialect string, db *sql.DB) *Driver {
+	return NewDriver(
+		sqlDialect,
+		Conn{db, sqlDialect},
+		NewRetryExecutor(sqlDialect, db),
+	)
 }
 
 // DB returns the underlying *sql.DB instance.
@@ -72,6 +116,10 @@ func (d *Driver) BeginTx(ctx context.Context, opts *TxOptions) (dialect.Tx, erro
 		Conn: Conn{tx, d.dialect},
 		Tx:   tx,
 	}, nil
+}
+
+func (d *Driver) RetryExecutor() RetryExecutor {
+	return d.retryExecutor
 }
 
 // Close closes the underlying connection.

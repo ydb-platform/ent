@@ -21,7 +21,7 @@ type BuilderDelete struct {
 	config
 	hooks       []Hook
 	mutation    *BuilderMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the BuilderDelete builder.

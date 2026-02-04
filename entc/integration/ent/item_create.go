@@ -23,7 +23,7 @@ type ItemCreate struct {
 	config
 	mutation    *ItemMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -338,7 +338,7 @@ type ItemCreateBulk struct {
 	config
 	err         error
 	builders    []*ItemCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

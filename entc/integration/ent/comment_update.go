@@ -25,7 +25,7 @@ type CommentUpdate struct {
 	hooks       []Hook
 	mutation    *CommentMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the CommentUpdate builder.
@@ -277,7 +277,7 @@ type CommentUpdateOne struct {
 	hooks       []Hook
 	mutation    *CommentMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetUniqueInt sets the "unique_int" field.

@@ -28,7 +28,7 @@ type FileUpdate struct {
 	hooks       []Hook
 	mutation    *FileMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the FileUpdate builder.
@@ -539,7 +539,7 @@ type FileUpdateOne struct {
 	hooks       []Hook
 	mutation    *FileMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetSetID sets the "set_id" field.

@@ -25,7 +25,7 @@ type TaskUpdate struct {
 	hooks       []Hook
 	mutation    *TaskMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the TaskUpdate builder.
@@ -313,7 +313,7 @@ type TaskUpdateOne struct {
 	hooks       []Hook
 	mutation    *TaskMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetPriority sets the "priority" field.

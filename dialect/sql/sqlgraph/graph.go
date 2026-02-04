@@ -776,7 +776,7 @@ type (
 		//
 		OnConflict []sql.ConflictOption
 
-		RetryConfig RetryConfig
+		RetryConfig sql.RetryConfig
 	}
 
 	// BatchCreateSpec holds the information for creating
@@ -795,7 +795,7 @@ type (
 		//
 		OnConflict []sql.ConflictOption
 
-		RetryConfig RetryConfig
+		RetryConfig sql.RetryConfig
 	}
 )
 
@@ -836,7 +836,7 @@ func BatchCreate(ctx context.Context, drv dialect.Driver, spec *BatchCreateSpec)
 
 // execWithRetryTx executes the operation with retry if available, otherwise executes directly.
 func execWithRetryTx(ctx context.Context, drv dialect.Driver, op func(context.Context, dialect.Driver) error, opts []any) error {
-	if retry := getRetryExecutor(drv); retry != nil {
+	if retry := sql.GetRetryExecutor(drv); retry != nil {
 		return retry.DoTx(ctx, op, opts...)
 	}
 	return op(ctx, drv)
@@ -868,7 +868,7 @@ type (
 		ScanValues func(columns []string) ([]any, error)
 		Assign     func(columns []string, values []any) error
 
-		RetryConfig RetryConfig
+		RetryConfig sql.RetryConfig
 	}
 )
 
@@ -936,7 +936,7 @@ func UpdateNode(ctx context.Context, drv dialect.Driver, spec *UpdateSpec) error
 		}
 		return tx.Commit()
 	}
-	if retry := getRetryExecutor(drv); retry != nil {
+	if retry := sql.GetRetryExecutor(drv); retry != nil {
 		return retry.DoTx(ctx, op, spec.RetryConfig.Options...)
 	}
 	return op(ctx, drv)
@@ -955,7 +955,7 @@ func UpdateNodes(ctx context.Context, drv dialect.Driver, spec *UpdateSpec) (int
 		affected = n
 		return nil
 	}
-	if retry := getRetryExecutor(drv); retry != nil {
+	if retry := sql.GetRetryExecutor(drv); retry != nil {
 		if err := retry.DoTx(ctx, op, spec.RetryConfig.Options...); err != nil {
 			return 0, err
 		}
@@ -983,7 +983,7 @@ func (e *NotFoundError) Error() string {
 type DeleteSpec struct {
 	Node        *NodeSpec
 	Predicate   func(*sql.Selector)
-	RetryConfig RetryConfig
+	RetryConfig sql.RetryConfig
 }
 
 // NewDeleteSpec creates a new node deletion spec.
@@ -1031,7 +1031,7 @@ func DeleteNodes(ctx context.Context, drv dialect.Driver, spec *DeleteSpec) (int
 		affected = int(n)
 		return nil
 	}
-	if retry := getRetryExecutor(drv); retry != nil {
+	if retry := sql.GetRetryExecutor(drv); retry != nil {
 		if err := retry.DoTx(ctx, op, spec.RetryConfig.Options...); err != nil {
 			return 0, err
 		}
@@ -1059,7 +1059,7 @@ type QuerySpec struct {
 	ScanValues func(columns []string) ([]any, error)
 	Assign     func(columns []string, values []any) error
 
-	RetryConfig RetryConfig
+	RetryConfig sql.RetryConfig
 }
 
 // NewQuerySpec creates a new node query spec.
@@ -1080,7 +1080,7 @@ func QueryNodes(ctx context.Context, drv dialect.Driver, spec *QuerySpec) error 
 		qr := &query{graph: graph{builder: builder}, QuerySpec: spec}
 		return qr.nodes(ctx, d)
 	}
-	if retry := getRetryExecutor(drv); retry != nil {
+	if retry := sql.GetRetryExecutor(drv); retry != nil {
 		return retry.Do(ctx, op, spec.RetryConfig.Options...)
 	}
 	return op(ctx, drv)
@@ -1099,7 +1099,7 @@ func CountNodes(ctx context.Context, drv dialect.Driver, spec *QuerySpec) (int, 
 		count = n
 		return nil
 	}
-	if retry := getRetryExecutor(drv); retry != nil {
+	if retry := sql.GetRetryExecutor(drv); retry != nil {
 		if err := retry.Do(ctx, op, spec.RetryConfig.Options...); err != nil {
 			return 0, err
 		}

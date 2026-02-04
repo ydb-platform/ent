@@ -25,7 +25,7 @@ type GroupInfoUpdate struct {
 	hooks       []Hook
 	mutation    *GroupInfoMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the GroupInfoUpdate builder.
@@ -234,7 +234,7 @@ type GroupInfoUpdateOne struct {
 	hooks       []Hook
 	mutation    *GroupInfoMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetDesc sets the "desc" field.

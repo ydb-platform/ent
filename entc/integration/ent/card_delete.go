@@ -21,7 +21,7 @@ type CardDelete struct {
 	config
 	hooks       []Hook
 	mutation    *CardMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the CardDelete builder.

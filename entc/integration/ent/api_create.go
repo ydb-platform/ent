@@ -22,7 +22,7 @@ type APICreate struct {
 	config
 	mutation    *APIMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -219,7 +219,7 @@ type APICreateBulk struct {
 	config
 	err         error
 	builders    []*APICreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

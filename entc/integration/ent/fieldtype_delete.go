@@ -21,7 +21,7 @@ type FieldTypeDelete struct {
 	config
 	hooks       []Hook
 	mutation    *FieldTypeMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the FieldTypeDelete builder.

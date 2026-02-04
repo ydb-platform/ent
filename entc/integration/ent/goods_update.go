@@ -24,7 +24,7 @@ type GoodsUpdate struct {
 	hooks       []Hook
 	mutation    *GoodsMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the GoodsUpdate builder.
@@ -108,7 +108,7 @@ type GoodsUpdateOne struct {
 	hooks       []Hook
 	mutation    *GoodsMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Mutation returns the GoodsMutation object of the builder.

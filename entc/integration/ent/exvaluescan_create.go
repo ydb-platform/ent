@@ -24,7 +24,7 @@ type ExValueScanCreate struct {
 	config
 	mutation    *ExValueScanMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -612,7 +612,7 @@ type ExValueScanCreateBulk struct {
 	config
 	err         error
 	builders    []*ExValueScanCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

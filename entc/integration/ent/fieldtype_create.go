@@ -28,7 +28,7 @@ type FieldTypeCreate struct {
 	config
 	mutation    *FieldTypeMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -4181,7 +4181,7 @@ type FieldTypeCreateBulk struct {
 	config
 	err         error
 	builders    []*FieldTypeCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

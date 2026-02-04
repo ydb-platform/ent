@@ -21,7 +21,7 @@ type ItemDelete struct {
 	config
 	hooks       []Hook
 	mutation    *ItemMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the ItemDelete builder.

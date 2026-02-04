@@ -21,7 +21,7 @@ type SeasonDelete struct {
 	config
 	hooks       []Hook
 	mutation    *SeasonMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SeasonDelete builder.

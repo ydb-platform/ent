@@ -25,7 +25,7 @@ type PetCreate struct {
 	config
 	mutation    *PetMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -630,7 +630,7 @@ type PetCreateBulk struct {
 	config
 	err         error
 	builders    []*PetCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

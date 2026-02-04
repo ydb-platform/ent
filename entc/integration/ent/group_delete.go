@@ -21,7 +21,7 @@ type GroupDelete struct {
 	config
 	hooks       []Hook
 	mutation    *GroupMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the GroupDelete builder.

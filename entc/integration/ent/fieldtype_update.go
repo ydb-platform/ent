@@ -31,7 +31,7 @@ type FieldTypeUpdate struct {
 	hooks       []Hook
 	mutation    *FieldTypeMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the FieldTypeUpdate builder.
@@ -1946,7 +1946,7 @@ type FieldTypeUpdateOne struct {
 	hooks       []Hook
 	mutation    *FieldTypeMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetInt sets the "int" field.

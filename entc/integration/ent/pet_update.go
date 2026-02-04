@@ -27,7 +27,7 @@ type PetUpdate struct {
 	hooks       []Hook
 	mutation    *PetMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the PetUpdate builder.
@@ -358,7 +358,7 @@ type PetUpdateOne struct {
 	hooks       []Hook
 	mutation    *PetMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetAge sets the "age" field.

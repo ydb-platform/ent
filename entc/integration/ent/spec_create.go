@@ -23,7 +23,7 @@ type SpecCreate struct {
 	config
 	mutation    *SpecMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -251,7 +251,7 @@ type SpecCreateBulk struct {
 	config
 	err         error
 	builders    []*SpecCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

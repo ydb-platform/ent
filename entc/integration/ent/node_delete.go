@@ -21,7 +21,7 @@ type NodeDelete struct {
 	config
 	hooks       []Hook
 	mutation    *NodeMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the NodeDelete builder.

@@ -20,7 +20,6 @@ import (
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
-	"entgo.io/ent/dialect/ydb"
 	"entgo.io/ent/entc/integration/edgeschema/ent/attachedfile"
 	"entgo.io/ent/entc/integration/edgeschema/ent/file"
 	"entgo.io/ent/entc/integration/edgeschema/ent/friendship"
@@ -171,15 +170,7 @@ func Driver(driver dialect.Driver) Option {
 func Open(driverName, dataSourceName string, options ...Option) (*Client, error) {
 	switch driverName {
 	case dialect.MySQL, dialect.Postgres, dialect.SQLite, dialect.YDB:
-		var (
-			drv dialect.Driver
-			err error
-		)
-		if driverName == dialect.YDB {
-			drv, err = ydb.Open(context.Background(), dataSourceName)
-		} else {
-			drv, err = sql.Open(driverName, dataSourceName)
-		}
+		drv, err := sql.Open(driverName, dataSourceName)
 		if err != nil {
 			return nil, err
 		}

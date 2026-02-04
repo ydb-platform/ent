@@ -28,7 +28,7 @@ type ItemQuery struct {
 	inters      []Interceptor
 	predicates  []predicate.Item
 	modifiers   []func(*sql.Selector)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)

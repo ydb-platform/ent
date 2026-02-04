@@ -21,7 +21,7 @@ type SeriesDelete struct {
 	config
 	hooks       []Hook
 	mutation    *SeriesMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SeriesDelete builder.

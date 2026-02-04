@@ -35,7 +35,7 @@ type CardQuery struct {
 	withFKs       bool
 	modifiers     []func(*sql.Selector)
 	withNamedSpec map[string]*SpecQuery
-	retryConfig   sqlgraph.RetryConfig
+	retryConfig   sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)

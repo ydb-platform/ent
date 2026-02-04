@@ -25,7 +25,7 @@ type NodeUpdate struct {
 	hooks       []Hook
 	mutation    *NodeMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the NodeUpdate builder.
@@ -280,7 +280,7 @@ type NodeUpdateOne struct {
 	hooks       []Hook
 	mutation    *NodeMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetValue sets the "value" field.

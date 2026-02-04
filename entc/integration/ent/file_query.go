@@ -37,7 +37,7 @@ type FileQuery struct {
 	withFKs        bool
 	modifiers      []func(*sql.Selector)
 	withNamedField map[string]*FieldTypeQuery
-	retryConfig    sqlgraph.RetryConfig
+	retryConfig    sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)

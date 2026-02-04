@@ -24,7 +24,7 @@ type APIUpdate struct {
 	hooks       []Hook
 	mutation    *APIMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the APIUpdate builder.
@@ -108,7 +108,7 @@ type APIUpdateOne struct {
 	hooks       []Hook
 	mutation    *APIMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Mutation returns the APIMutation object of the builder.

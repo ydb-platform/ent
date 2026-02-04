@@ -25,7 +25,7 @@ type SeriesUpdate struct {
 	config
 	hooks       []Hook
 	mutation    *SeriesMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SeriesUpdate builder.
@@ -255,7 +255,7 @@ type SeriesUpdateOne struct {
 	fields      []string
 	hooks       []Hook
 	mutation    *SeriesMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetTitle sets the "title" field.

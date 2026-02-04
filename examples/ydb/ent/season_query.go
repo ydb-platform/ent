@@ -31,7 +31,7 @@ type SeasonQuery struct {
 	predicates   []predicate.Season
 	withSeries   *SeriesQuery
 	withEpisodes *EpisodeQuery
-	retryConfig  sqlgraph.RetryConfig
+	retryConfig  sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)

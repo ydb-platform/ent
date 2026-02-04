@@ -25,7 +25,7 @@ type FileTypeUpdate struct {
 	hooks       []Hook
 	mutation    *FileTypeMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the FileTypeUpdate builder.
@@ -259,7 +259,7 @@ type FileTypeUpdateOne struct {
 	hooks       []Hook
 	mutation    *FileTypeMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetName sets the "name" field.

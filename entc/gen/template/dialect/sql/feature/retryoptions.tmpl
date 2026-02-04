@@ -12,35 +12,35 @@ in the LICENSE file in the root directory of this source tree.
 {{/* Additional fields for the create builder. */}}
 {{ define "dialect/sql/create/fields/additional/retryoptions" -}}
 	{{- if $.FeatureEnabled "sql/retryoptions" }}
-		retryConfig sqlgraph.RetryConfig
+		retryConfig sql.RetryConfig
 	{{- end }}
 {{- end }}
 
 {{/* Additional fields for the create_bulk builder. */}}
 {{ define "dialect/sql/create_bulk/fields/additional/retryoptions" -}}
 	{{- if $.FeatureEnabled "sql/retryoptions" }}
-		retryConfig sqlgraph.RetryConfig
+		retryConfig sql.RetryConfig
 	{{- end }}
 {{- end }}
 
 {{/* Additional fields for the update builder. */}}
 {{ define "dialect/sql/update/fields/additional/retryoptions" -}}
 	{{- if $.FeatureEnabled "sql/retryoptions" }}
-		retryConfig sqlgraph.RetryConfig
+		retryConfig sql.RetryConfig
 	{{- end }}
 {{- end }}
 
 {{/* Additional fields for the query builder. */}}
 {{ define "dialect/sql/query/fields/additional/retryoptions" -}}
 	{{- if $.FeatureEnabled "sql/retryoptions" }}
-		retryConfig sqlgraph.RetryConfig
+		retryConfig sql.RetryConfig
 	{{- end }}
 {{- end }}
 
 {{/* Additional fields for the delete builder. */}}
 {{ define "dialect/sql/delete/fields/additional/retryoptions" -}}
 	{{- if $.FeatureEnabled "sql/retryoptions" }}
-		retryConfig sqlgraph.RetryConfig
+		retryConfig sql.RetryConfig
 	{{- end }}
 {{- end }}
 

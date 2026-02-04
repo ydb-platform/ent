@@ -32,7 +32,7 @@ type GroupInfoQuery struct {
 	withGroups      *GroupQuery
 	modifiers       []func(*sql.Selector)
 	withNamedGroups map[string]*GroupQuery
-	retryConfig     sqlgraph.RetryConfig
+	retryConfig     sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)

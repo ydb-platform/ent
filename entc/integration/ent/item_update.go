@@ -24,7 +24,7 @@ type ItemUpdate struct {
 	hooks       []Hook
 	mutation    *ItemMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the ItemUpdate builder.
@@ -147,7 +147,7 @@ type ItemUpdateOne struct {
 	hooks       []Hook
 	mutation    *ItemMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetText sets the "text" field.

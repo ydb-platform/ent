@@ -6,12 +6,12 @@ package schema
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	entdrv "entgo.io/ent/dialect/ydb"
 	"entgo.io/ent/schema/field"
 
 	"ariga.io/atlas/sql/migrate"
@@ -67,32 +67,29 @@ func (d *YDB) tableExist(ctx context.Context, conn dialect.ExecQuerier, name str
 
 // atOpen returns a custom Atlas migrate.Driver for YDB.
 func (d *YDB) atOpen(conn dialect.ExecQuerier) (migrate.Driver, error) {
-	ydbDriver := unwrapYDBDriver(conn)
-	if ydbDriver == nil {
-		ydbDriver = unwrapYDBDriver(d.Driver)
+	sqlDB := unwrapDB(conn)
+	if sqlDB == nil {
+		sqlDB = unwrapDB(d.Driver)
 	}
-	if ydbDriver == nil {
-		return nil, fmt.Errorf("expected dialect/ydb.YDBDriver, but got %T", conn)
+	if sqlDB == nil {
+		return nil, fmt.Errorf("ydb: cannot get *sql.DB from %T (driver: %T)", conn, d.Driver)
 	}
-
-	return atlas.Open(
-		ydbDriver.NativeDriver(),
-		ydbDriver.DB(),
-	)
+	return atlas.Open(sqlDB)
 }
 
-func unwrapYDBDriver(driver any) *entdrv.YDBDriver {
-	switch drv := driver.(type) {
-	case *entdrv.YDBDriver:
-		return drv
+func unwrapDB(db any) *sql.DB {
+	switch casted := db.(type) {
+	case interface{ DB() *sql.DB }:
+		return casted.DB()
 	case *YDB:
-		return unwrapYDBDriver(drv.Driver)
-	case *WriteDriver:
-		return unwrapYDBDriver(drv.Driver)
+		return unwrapDB(casted.Driver)
 	case *dialect.DebugDriver:
-		return unwrapYDBDriver(drv.Driver)
+		return unwrapDB(casted.Driver)
+	case *WriteDriver:
+		return unwrapDB(casted.Driver)
+	default:
+		return nil
 	}
-	return nil
 }
 
 func (d *YDB) atTable(table1 *Table, table2 *schema.Table) {

@@ -856,7 +856,11 @@ func fillNulls(dbdialect string) schema.ApplyHook {
 			// There are three ways to UPDATE the NULL values to "Unknown" in this stage.
 			// Append a custom migrate.Change to the plan, execute an SQL statement directly
 			// on the dialect.ExecQuerier, or use the ent.Client used by the project.
-			drv := sql.NewDriver(dbdialect, sql.Conn{ExecQuerier: conn.(*sql.Tx)})
+			drv := sql.NewDriver(
+				dbdialect, 
+				sql.Conn{ExecQuerier: conn.(*sql.Tx)},
+				sql.NewRetryExecutor(dbdialect, nil),
+			)
 			client := entv2.NewClient(entv2.Driver(drv))
 			if err := client.User.
 				Update().

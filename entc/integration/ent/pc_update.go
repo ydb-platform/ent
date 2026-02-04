@@ -24,7 +24,7 @@ type PCUpdate struct {
 	hooks       []Hook
 	mutation    *PCMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the PCUpdate builder.
@@ -108,7 +108,7 @@ type PCUpdateOne struct {
 	hooks       []Hook
 	mutation    *PCMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Mutation returns the PCMutation object of the builder.

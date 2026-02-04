@@ -24,7 +24,7 @@ type BuilderUpdate struct {
 	hooks       []Hook
 	mutation    *BuilderMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the BuilderUpdate builder.
@@ -108,7 +108,7 @@ type BuilderUpdateOne struct {
 	hooks       []Hook
 	mutation    *BuilderMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Mutation returns the BuilderMutation object of the builder.

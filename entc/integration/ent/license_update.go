@@ -25,7 +25,7 @@ type LicenseUpdate struct {
 	hooks       []Hook
 	mutation    *LicenseMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the LicenseUpdate builder.
@@ -127,7 +127,7 @@ type LicenseUpdateOne struct {
 	hooks       []Hook
 	mutation    *LicenseMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetUpdateTime sets the "update_time" field.

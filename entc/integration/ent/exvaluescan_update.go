@@ -26,7 +26,7 @@ type ExValueScanUpdate struct {
 	hooks       []Hook
 	mutation    *ExValueScanMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the ExValueScanUpdate builder.
@@ -265,7 +265,7 @@ type ExValueScanUpdateOne struct {
 	hooks       []Hook
 	mutation    *ExValueScanMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetBinary sets the "binary" field.

@@ -23,7 +23,7 @@ type NodeCreate struct {
 	config
 	mutation    *NodeMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -424,7 +424,7 @@ type NodeCreateBulk struct {
 	config
 	err         error
 	builders    []*NodeCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

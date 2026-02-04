@@ -28,7 +28,7 @@ type UserUpdate struct {
 	hooks       []Hook
 	mutation    *UserMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the UserUpdate builder.
@@ -1215,7 +1215,7 @@ type UserUpdateOne struct {
 	hooks       []Hook
 	mutation    *UserMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetOptionalInt sets the "optional_int" field.

@@ -22,7 +22,7 @@ type PCCreate struct {
 	config
 	mutation    *PCMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -219,7 +219,7 @@ type PCCreateBulk struct {
 	config
 	err         error
 	builders    []*PCCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

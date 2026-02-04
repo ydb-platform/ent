@@ -26,7 +26,7 @@ type FileCreate struct {
 	config
 	mutation    *FileMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -818,7 +818,7 @@ type FileCreateBulk struct {
 	config
 	err         error
 	builders    []*FileCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

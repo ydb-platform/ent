@@ -25,7 +25,7 @@ type SpecUpdate struct {
 	hooks       []Hook
 	mutation    *SpecMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SpecUpdate builder.
@@ -190,7 +190,7 @@ type SpecUpdateOne struct {
 	hooks       []Hook
 	mutation    *SpecMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // AddCardIDs adds the "card" edge to the Card entity by IDs.

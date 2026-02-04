@@ -21,7 +21,7 @@ type UserDelete struct {
 	config
 	hooks       []Hook
 	mutation    *UserMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the UserDelete builder.

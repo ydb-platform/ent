@@ -25,7 +25,7 @@ type EpisodeUpdate struct {
 	config
 	hooks       []Hook
 	mutation    *EpisodeMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the EpisodeUpdate builder.
@@ -205,7 +205,7 @@ type EpisodeUpdateOne struct {
 	fields      []string
 	hooks       []Hook
 	mutation    *EpisodeMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetSeasonID sets the "season_id" field.

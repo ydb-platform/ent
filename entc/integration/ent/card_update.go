@@ -27,7 +27,7 @@ type CardUpdate struct {
 	hooks       []Hook
 	mutation    *CardMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the CardUpdate builder.
@@ -330,7 +330,7 @@ type CardUpdateOne struct {
 	hooks       []Hook
 	mutation    *CardMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetUpdateTime sets the "update_time" field.

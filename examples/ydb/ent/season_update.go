@@ -26,7 +26,7 @@ type SeasonUpdate struct {
 	config
 	hooks       []Hook
 	mutation    *SeasonMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SeasonUpdate builder.
@@ -304,7 +304,7 @@ type SeasonUpdateOne struct {
 	fields      []string
 	hooks       []Hook
 	mutation    *SeasonMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetSeriesID sets the "series_id" field.

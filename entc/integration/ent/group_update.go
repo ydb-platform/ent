@@ -28,7 +28,7 @@ type GroupUpdate struct {
 	hooks       []Hook
 	mutation    *GroupMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the GroupUpdate builder.
@@ -540,7 +540,7 @@ type GroupUpdateOne struct {
 	hooks       []Hook
 	mutation    *GroupMutation
 	modifiers   []func(*sql.UpdateBuilder)
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetActive sets the "active" field.
