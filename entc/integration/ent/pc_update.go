@@ -90,7 +90,7 @@ func (_u *PCUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	_spec.AddModifiers(_u.modifiers...)
 	_spec.RetryConfig = _u.retryConfig
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{pc.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
@@ -201,7 +201,7 @@ func (_u *PCUpdateOne) sqlSave(ctx context.Context) (_node *PC, err error) {
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{pc.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
