@@ -7,7 +7,6 @@ package sql
 import (
 	"context"
 	"database/sql"
-	"errors"
 
 	"entgo.io/ent/dialect"
 	"github.com/ydb-platform/ydb-go-sdk/v3/retry"
@@ -137,7 +136,7 @@ func (r *YDBRetryExecutor) Do(
 	fn func(ctx context.Context, drv dialect.Driver) error,
 	opts ...any,
 ) error {
-	err := retry.Do(
+	return retry.Do(
 		ctx,
 		r.db,
 		func(ctx context.Context, conn *sql.Conn) error {
@@ -145,7 +144,6 @@ func (r *YDBRetryExecutor) Do(
 		},
 		retry.WithDoRetryOptions(toRetryOptions(opts)...),
 	)
-	return unwrapYDBError(err)
 }
 
 // DoTx executes the operation within a transaction with retry support.
@@ -156,7 +154,7 @@ func (r *YDBRetryExecutor) DoTx(
 	fn func(ctx context.Context, drv dialect.Driver) error,
 	opts ...any,
 ) error {
-	err := retry.DoTx(
+	return retry.DoTx(
 		ctx,
 		r.db,
 		func(ctx context.Context, tx *sql.Tx) error {
@@ -164,25 +162,6 @@ func (r *YDBRetryExecutor) DoTx(
 		},
 		retry.WithDoTxRetryOptions(toRetryOptions(opts)...),
 	)
-	return unwrapYDBError(err)
-}
-
-// unwrapYDBError extracts the original error from YDB's error wrapping.
-// YDB SDK wraps errors with stack traces and retry context, which changes
-// the error message.
-func unwrapYDBError(err error) error {
-	if err == nil {
-		return nil
-	}
-	original := err
-	for {
-		unwrapped := errors.Unwrap(original)
-		if unwrapped == nil {
-			break
-		}
-		original = unwrapped
-	}
-	return original
 }
 
 // toRetryOptions converts a slice of any options to retry.Option slice
@@ -196,24 +175,24 @@ func toRetryOptions(opts []any) []retry.Option {
 	return retryOpts
 }
 
-// retryDriver is designed for use only in sqlgraph,
+// ydbRetryDriver is designed for use only in sqlgraph,
 // specifically - in retry.DoTx callbacks
-type retryDriver struct {
+type ydbRetryDriver struct {
 	Conn
 }
 
-var _ dialect.Driver = (*retryDriver)(nil)
+var _ dialect.Driver = (*ydbRetryDriver)(nil)
 
 // newConnRetryDriver creates a new RetryDriver from a database connection.
-func newConnRetryDriver(conn *sql.Conn) *retryDriver {
-	return &retryDriver{
+func newConnRetryDriver(conn *sql.Conn) *ydbRetryDriver {
+	return &ydbRetryDriver{
 		Conn: Conn{ExecQuerier: conn},
 	}
 }
 
 // newTxRetryDriver creates a new RetryDriver from a transaction.
-func newTxRetryDriver(tx *sql.Tx) *retryDriver {
-	return &retryDriver{
+func newTxRetryDriver(tx *sql.Tx) *ydbRetryDriver {
+	return &ydbRetryDriver{
 		Conn: Conn{ExecQuerier: tx},
 	}
 }
@@ -221,16 +200,16 @@ func newTxRetryDriver(tx *sql.Tx) *retryDriver {
 // sqlgraph creates nested transactions in several methods.
 // But YDB doesnt support nested transactions.
 // Therefore, this methods returns no-op tx
-func (d *retryDriver) Tx(ctx context.Context) (dialect.Tx, error) {
+func (d *ydbRetryDriver) Tx(ctx context.Context) (dialect.Tx, error) {
 	return dialect.NopTx(d), nil
 }
 
 // Close is a no-op for RetryDriver since retry.DoTx manages the transaction lifecycle.
-func (d *retryDriver) Close() error {
+func (d *ydbRetryDriver) Close() error {
 	return nil
 }
 
 // Dialect returns the YDB dialect name.
-func (d *retryDriver) Dialect() string {
+func (d *ydbRetryDriver) Dialect() string {
 	return dialect.YDB
 }
