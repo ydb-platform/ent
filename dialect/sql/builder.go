@@ -157,8 +157,7 @@ type InsertBuilder struct {
 	conflict  *conflict
 
 	// YDB-specific:
-	isUpsert  bool // use UPSERT instead of INSERT
-	isReplace bool // use REPLACE instead of INSERT
+	isUpsert bool // use UPSERT instead of INSERT
 }
 
 // Insert creates a builder for the `INSERT INTO` statement.
@@ -184,21 +183,6 @@ func Insert(table string) *InsertBuilder { return &InsertBuilder{table: table} }
 // Note: UPSERT is only supported in YDB dialect.
 func Upsert(table string) *InsertBuilder {
 	return &InsertBuilder{table: table, isUpsert: true}
-}
-
-// Replace creates a builder for the `REPLACE INTO` statement.
-// REPLACE overwrites entire rows based on primary key comparison.
-// For existing rows, the entire row is replaced (unspecified columns get default values).
-// For missing rows, new rows are inserted.
-//
-//	Replace("users").
-//		Columns("id", "name", "age").
-//		Values(1, "a8m", 10).
-//		Values(2, "foo", 20)
-//
-// Note: REPLACE is only supported in YDB dialect.
-func Replace(table string) *InsertBuilder {
-	return &InsertBuilder{table: table, isReplace: true}
 }
 
 // Schema sets the database name for the insert table.
@@ -494,20 +478,13 @@ func (i *InsertBuilder) Query() (string, []any) {
 func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	b := i.Builder.clone()
 
-	switch {
-	case i.isUpsert:
+	if i.isUpsert {
 		if !b.ydb() {
 			b.AddError(fmt.Errorf("UPSERT INTO is not supported by %q", b.dialect))
 			return "", nil, b.Err()
 		}
 		b.WriteString("UPSERT INTO ")
-	case i.isReplace:
-		if !b.ydb() {
-			b.AddError(fmt.Errorf("REPLACE INTO is not supported by %q", b.dialect))
-			return "", nil, b.Err()
-		}
-		b.WriteString("REPLACE INTO ")
-	default:
+	} else {
 		b.WriteString("INSERT INTO ")
 	}
 
@@ -597,27 +574,12 @@ type UpdateBuilder struct {
 	order     []any
 	limit     *int
 	prefix    Queries
-
-	// YDB-specific:
-	onSelect *Selector // UPDATE ON subquery
-	isBatch  bool      // use BATCH UPDATE instead of UPDATE
 }
 
 // Update creates a builder for the `UPDATE` statement.
 //
 //	Update("users").Set("name", "foo").Set("age", 10)
 func Update(table string) *UpdateBuilder { return &UpdateBuilder{table: table} }
-
-// BatchUpdate creates a builder for the `BATCH UPDATE` statement (YDB-specific).
-// BATCH UPDATE processes large tables in batches, minimizing lock invalidation risk.
-//
-// Note: BATCH UPDATE is only supported in YDB dialect.
-// Note: YDB uses path notation for tables, e.g. "/database/path/to/table"
-//
-//	BatchUpdate("/local/my_table").Set("status", "active").Where(GT("id", 100))
-func BatchUpdate(table string) *UpdateBuilder {
-	return &UpdateBuilder{table: table, isBatch: true}
-}
 
 // Schema sets the database name for the updated table.
 func (u *UpdateBuilder) Schema(name string) *UpdateBuilder {
@@ -721,25 +683,6 @@ func (u *UpdateBuilder) Returning(columns ...string) *UpdateBuilder {
 	return u
 }
 
-// On sets a subquery for the UPDATE ON statement (YDB-specific).
-// The subquery must return columns that include all primary key columns.
-// For each row in the subquery result, the corresponding row in the table is updated.
-//
-//	Update("users").
-//		On(
-//			Select("key", "name")
-//				.From(Table("temp_updates"))
-//				.Where(EQ("status", "pending"))
-//		)
-func (u *UpdateBuilder) On(s *Selector) *UpdateBuilder {
-	if u.ydb() {
-		u.onSelect = s
-	} else {
-		u.AddError(fmt.Errorf("UPDATE ON is not supported by %q", u.dialect))
-	}
-	return u
-}
-
 // Query returns query representation of an `UPDATE` statement.
 func (u *UpdateBuilder) Query() (string, []any) {
 	query, args, _ := u.QueryErr()
@@ -753,35 +696,9 @@ func (u *UpdateBuilder) QueryErr() (string, []any, error) {
 		b.Pad()
 	}
 
-	// BATCH UPDATE (YDB-specific)
-	if u.isBatch {
-		if !b.ydb() {
-			b.AddError(fmt.Errorf("BATCH UPDATE is not supported by %q", b.dialect))
-			return "", nil, b.Err()
-		}
-		if len(u.returning) > 0 {
-			b.AddError(fmt.Errorf("BATCH UPDATE: RETURNING clause is not supported"))
-			return "", nil, b.Err()
-		}
-		if u.onSelect != nil {
-			b.AddError(fmt.Errorf("BATCH UPDATE: UPDATE ON pattern is not supported"))
-			return "", nil, b.Err()
-		}
-		b.WriteString("BATCH UPDATE ")
-	} else {
-		b.WriteString("UPDATE ")
-	}
-
+	b.WriteString("UPDATE ")
 	b.writeSchema(u.schema)
 	b.Ident(u.table)
-
-	// UPDATE ON pattern (YDB-specific)
-	if u.onSelect != nil {
-		b.WriteString(" ON ")
-		b.Join(u.onSelect)
-		joinReturning(u.returning, &b)
-		return b.String(), b.args, nil
-	}
 
 	// Standard UPDATE SET pattern
 	b.WriteString(" SET ")
@@ -827,14 +744,10 @@ func (u *UpdateBuilder) writeSetter(b *Builder) {
 // DeleteBuilder is a builder for `DELETE` statement.
 type DeleteBuilder struct {
 	Builder
-	table  string
-	schema string
-	where  *Predicate
-
-	// YDB-specific:
-	onSelect  *Selector // DELETE FROM ... ON SELECT pattern
-	returning []string
-	isBatch   bool // use BATCH DELETE instead of DELETE
+	table     string
+	schema    string
+	where     *Predicate
+	returning []string // YDB-specific
 }
 
 // Delete creates a builder for the `DELETE` statement.
@@ -851,16 +764,6 @@ type DeleteBuilder struct {
 //			),
 //		)
 func Delete(table string) *DeleteBuilder { return &DeleteBuilder{table: table} }
-
-// BatchDelete creates a builder for the `BATCH DELETE FROM` statement (YDB-specific).
-// BATCH DELETE processes large tables in batches, minimizing lock invalidation risk.
-//
-// Note: BATCH DELETE is only supported in YDB dialect.
-//
-// BatchDelete("/local/my_table").Where(GT("Key1", 1))
-func BatchDelete(table string) *DeleteBuilder {
-	return &DeleteBuilder{table: table, isBatch: true}
-}
 
 // Schema sets the database name for the table whose row will be deleted.
 func (d *DeleteBuilder) Schema(name string) *DeleteBuilder {
@@ -887,20 +790,6 @@ func (d *DeleteBuilder) FromSelect(s *Selector) *DeleteBuilder {
 	return d
 }
 
-// On sets the subquery for DELETE FROM ... ON SELECT pattern (YDB-specific).
-// This allows deleting rows based on a subquery that returns primary key columns.
-//
-//	Delete("users").
-//		On(Select("id").From(Table("users")).Where(EQ("status", "inactive")))
-func (d *DeleteBuilder) On(s *Selector) *DeleteBuilder {
-	if d.ydb() {
-		d.onSelect = s
-	} else {
-		d.AddError(fmt.Errorf("DELETE ON is not supported by %q", d.dialect))
-	}
-	return d
-}
-
 // Returning adds the `RETURNING` clause to the delete statement.
 // Supported by YDB.
 func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
@@ -921,34 +810,11 @@ func (d *DeleteBuilder) Query() (string, []any) {
 func (d *DeleteBuilder) QueryErr() (string, []any, error) {
 	b := d.Builder.clone()
 
-	// BATCH DELETE (YDB-specific)
-	if d.isBatch {
-		if !b.ydb() {
-			b.AddError(fmt.Errorf("BATCH DELETE is not supported by %q", b.dialect))
-			return "", nil, b.Err()
-		}
-		if len(d.returning) > 0 {
-			b.AddError(fmt.Errorf("BATCH DELETE: RETURNING clause is not supported"))
-			return "", nil, b.Err()
-		}
-		if d.onSelect != nil {
-			b.AddError(fmt.Errorf("BATCH DELETE: DELETE ON pattern is not supported"))
-			return "", nil, b.Err()
-		}
-		b.WriteString("BATCH DELETE FROM ")
-	} else {
-		b.WriteString("DELETE FROM ")
-	}
-
+	b.WriteString("DELETE FROM ")
 	b.writeSchema(d.schema)
 	b.Ident(d.table)
 
-	// YDB-specific DELETE ON SELECT pattern
-	if d.onSelect != nil {
-		d.onSelect.SetDialect(b.dialect)
-		b.WriteString(" ON ")
-		b.Join(d.onSelect)
-	} else if d.where != nil {
+	if d.where != nil {
 		b.WriteString(" WHERE ")
 		b.Join(d.where)
 	}
@@ -1887,8 +1753,7 @@ type SelectTable struct {
 	quote  bool
 
 	// YDB-specific:
-	index string // secondary index name for VIEW clause
-	isCte   bool   // YDB-specific: marks this as a CTE reference
+	isCte bool // YDB-specific: marks this as a CTE reference
 }
 
 // Table returns a new table selector.
@@ -1908,20 +1773,6 @@ func (s *SelectTable) Schema(name string) *SelectTable {
 // As adds the AS clause to the table selector.
 func (s *SelectTable) As(alias string) *SelectTable {
 	s.as = alias
-	return s
-}
-
-// View sets the secondary index name for the VIEW clause (YDB-specific).
-// This allows explicit use of secondary indexes in SELECT and JOIN operations.
-//
-//	t := Table("users").View("idx_email").As("u")
-//	Select().From(Table("orders")).Join(t).On(...)
-func (s *SelectTable) View(index string) *SelectTable {
-	if s.ydb() {
-		s.index = index
-	} else {
-		s.AddError(fmt.Errorf("VIEW is not supported by %q", s.dialect))
-	}
 	return s
 }
 
@@ -1982,12 +1833,6 @@ func (s *SelectTable) ref() string {
 
 	b.Ident(s.name)
 
-	// YDB-specific: VIEW clause for secondary indexes
-	if s.index != "" {
-		b.WriteString(" VIEW ")
-		b.Ident(s.index)
-	}
-
 	if s.as != "" {
 		b.WriteString(" AS ")
 		b.Ident(s.as)
@@ -2019,25 +1864,24 @@ type Selector struct {
 	Builder
 	// ctx stores contextual data typically from
 	// generated code such as alternate table schemas.
-	ctx         context.Context
-	as          string
-	selection   []*selection
-	from        []TableView
-	joins       []join
-	collected   [][]*Predicate
-	where       *Predicate
-	or          bool
-	not         bool
-	order       []any
-	assumeOrder []string // YDB-specific: ASSUME ORDER BY columns
-	group       []string
-	having      *Predicate
-	limit       *int
-	offset      *int
-	distinct    bool
-	setOps      []setOp
-	prefix      Queries
-	lock        *LockOptions
+	ctx       context.Context
+	as        string
+	selection []*selection
+	from      []TableView
+	joins     []join
+	collected [][]*Predicate
+	where     *Predicate
+	or        bool
+	not       bool
+	order     []any
+	group     []string
+	having    *Predicate
+	limit     *int
+	offset    *int
+	distinct  bool
+	setOps    []setOp
+	prefix    Queries
+	lock      *LockOptions
 }
 
 // New returns a new Selector with the same dialect and context.
@@ -2456,34 +2300,9 @@ func (s *Selector) FullJoin(t TableView) *Selector {
 	return s.join("FULL JOIN", t)
 }
 
-// LeftSemiJoin appends a `LEFT SEMI JOIN` clause to the statement (YDB-specific).
-func (s *Selector) LeftSemiJoin(t TableView) *Selector {
-	return s.join("LEFT SEMI JOIN", t)
-}
-
-// RightSemiJoin appends a `RIGHT SEMI JOIN` clause to the statement (YDB-specific).
-func (s *Selector) RightSemiJoin(t TableView) *Selector {
-	return s.join("RIGHT SEMI JOIN", t)
-}
-
-// LeftOnlyJoin appends a `LEFT ONLY JOIN` clause to the statement (YDB-specific).
-func (s *Selector) LeftOnlyJoin(t TableView) *Selector {
-	return s.join("LEFT ONLY JOIN", t)
-}
-
-// RightOnlyJoin appends a `RIGHT ONLY JOIN` clause to the statement (YDB-specific).
-func (s *Selector) RightOnlyJoin(t TableView) *Selector {
-	return s.join("RIGHT ONLY JOIN", t)
-}
-
 // CrossJoin appends a `CROSS JOIN` clause to the statement.
 func (s *Selector) CrossJoin(t TableView) *Selector {
 	return s.join("CROSS JOIN", t)
-}
-
-// ExclusionJoin appends an `EXCLUSION JOIN` clause to the statement (YDB-specific).
-func (s *Selector) ExclusionJoin(t TableView) *Selector {
-	return s.join("EXCLUSION JOIN", t)
 }
 
 // join adds a join table to the selector with the given kind.
@@ -2784,22 +2603,21 @@ func (s *Selector) Clone() *Selector {
 		joins[i] = s.joins[i].clone()
 	}
 	return &Selector{
-		Builder:     s.Builder.clone(),
-		ctx:         s.ctx,
-		as:          s.as,
-		or:          s.or,
-		not:         s.not,
-		from:        s.from,
-		limit:       s.limit,
-		offset:      s.offset,
-		distinct:    s.distinct,
-		where:       s.where.clone(),
-		having:      s.having.clone(),
-		joins:       append([]join{}, joins...),
-		group:       append([]string{}, s.group...),
-		order:       append([]any{}, s.order...),
-		assumeOrder: append([]string{}, s.assumeOrder...),
-		selection:   append([]*selection{}, s.selection...),
+		Builder:   s.Builder.clone(),
+		ctx:       s.ctx,
+		as:        s.as,
+		or:        s.or,
+		not:       s.not,
+		from:      s.from,
+		limit:     s.limit,
+		offset:    s.offset,
+		distinct:  s.distinct,
+		where:     s.where.clone(),
+		having:    s.having.clone(),
+		joins:     append([]join{}, joins...),
+		group:     append([]string{}, s.group...),
+		order:     append([]any{}, s.order...),
+		selection: append([]*selection{}, s.selection...),
 	}
 }
 
@@ -2827,11 +2645,6 @@ func DescExpr(x Querier) Querier {
 
 // OrderBy appends the `ORDER BY` clause to the `SELECT` statement.
 func (s *Selector) OrderBy(columns ...string) *Selector {
-	if s.ydb() && len(s.assumeOrder) != 0 {
-		s.AddError(fmt.Errorf("ORDER BY: can't be used with ASSUME ORDER BY simultaneously"))
-		return s
-	}
-
 	for i := range columns {
 		s.order = append(s.order, columns[i])
 	}
@@ -2870,27 +2683,6 @@ func (s *Selector) OrderExprFunc(f func(*Builder)) *Selector {
 // ClearOrder clears the ORDER BY clause to be empty.
 func (s *Selector) ClearOrder() *Selector {
 	s.order = nil
-	return s
-}
-
-// AssumeOrderBy appends the `ASSUME ORDER BY` clause to the `SELECT` statement (YDB-specific).
-// This tells YDB to assume the data is already sorted without actually sorting it.
-// This is an optimization hint and only works with column names (not expressions).
-//
-//	Select("*").
-//		From(Table("users")).
-//		AssumeOrderBy("first-key", Desc("second-key"))
-func (s *Selector) AssumeOrderBy(columns ...string) *Selector {
-	if s.ydb() {
-		if len(s.order) != 0 {
-			s.AddError(fmt.Errorf("ASSUME ORDER BY: can't be used with ORDER BY simultaneously"))
-			return s
-		}
-
-		s.assumeOrder = append(s.assumeOrder, columns...)
-	} else {
-		s.AddError(fmt.Errorf("ASSUME ORDER BY is not supported by %q", s.dialect))
-	}
 	return s
 }
 
@@ -2991,7 +2783,6 @@ func (s *Selector) Query() (string, []any) {
 		s.applyAliasesToOrder()
 	}
 	joinOrder(s.order, &b)
-	s.joinAssumeOrder(&b)
 	if s.limit != nil {
 		b.WriteString(" LIMIT ")
 		b.WriteString(strconv.Itoa(*s.limit))
@@ -3106,19 +2897,6 @@ func joinOrder(order []any, b *Builder) {
 		case Querier:
 			b.Join(r)
 		}
-	}
-}
-
-func (s *Selector) joinAssumeOrder(b *Builder) {
-	if !b.ydb() || len(s.assumeOrder) == 0 {
-		return
-	}
-	b.WriteString(" ASSUME ORDER BY ")
-	for i := range s.assumeOrder {
-		if i > 0 {
-			b.Comma()
-		}
-		b.Ident(s.assumeOrder[i])
 	}
 }
 
@@ -4185,19 +3963,6 @@ func (d *DialectBuilder) Upsert(table string) *InsertBuilder {
 	return b
 }
 
-// Replace creates an InsertBuilder for the REPLACE statement with the configured dialect.
-// REPLACE is only supported in YDB dialect.
-//
-//	Dialect(dialect.YDB).
-//		Replace("users").
-//		Columns("id", "name", "age").
-//		Values(1, "a8m", 10)
-func (d *DialectBuilder) Replace(table string) *InsertBuilder {
-	b := Replace(table)
-	b.SetDialect(d.dialect)
-	return b
-}
-
 // Update creates a UpdateBuilder for the configured dialect.
 //
 //	Dialect(dialect.Postgres).
@@ -4208,37 +3973,12 @@ func (d *DialectBuilder) Update(table string) *UpdateBuilder {
 	return b
 }
 
-// BatchUpdate creates an UpdateBuilder for the BATCH UPDATE statement with the configured dialect.
-// BATCH UPDATE is only supported in YDB dialect.
-//
-//	Dialect(dialect.YDB).
-//		BatchUpdate("users").
-//		Set("status", "active").
-//		Where(GT("created_at", time.Now()))
-func (d *DialectBuilder) BatchUpdate(table string) *UpdateBuilder {
-	b := BatchUpdate(table)
-	b.SetDialect(d.dialect)
-	return b
-}
-
 // Delete creates a DeleteBuilder for the configured dialect.
 //
 //	Dialect(dialect.Postgres).
 //		Delete().From("users")
 func (d *DialectBuilder) Delete(table string) *DeleteBuilder {
 	b := Delete(table)
-	b.SetDialect(d.dialect)
-	return b
-}
-
-// BatchDelete creates a DeleteBuilder for the BATCH DELETE statement with the configured dialect.
-// BATCH DELETE is only supported in YDB dialect.
-//
-//	Dialect(dialect.YDB).
-//		BatchDelete("users").
-//		Where(GT("Key1", 1))
-func (d *DialectBuilder) BatchDelete(table string) *DeleteBuilder {
-	b := BatchDelete(table)
 	b.SetDialect(d.dialect)
 	return b
 }
