@@ -9,7 +9,6 @@ import (
 	"database/sql"
 
 	"entgo.io/ent/dialect"
-	"github.com/ydb-platform/ydb-go-sdk/v3/retry"
 )
 
 // RetryExecutor is an interface for database operations with automatic retries.
@@ -59,61 +58,33 @@ type RetryExecutorGetter interface {
 // If the driver is wrapped with a DebugDriver, the returned executor will preserve
 // debug logging by wrapping the driver passed to callback functions.
 func GetRetryExecutor(drv dialect.Driver) RetryExecutor {
-	var logFn func(context.Context, ...any)
-	if dd, ok := drv.(*dialect.DebugDriver); ok {
-		logFn = dd.Log()
-		drv = dd.Driver
+	drv, logFn := unwrapDebugDriver(drv)
+
+	getter, ok := drv.(RetryExecutorGetter)
+	if !ok {
+		return nil
 	}
-	if getter, ok := drv.(RetryExecutorGetter); ok {
-		executor := getter.RetryExecutor()
-		if executor == nil {
-			return nil
-		}
-		if logFn != nil {
-			return &debugRetryExecutor{
-				RetryExecutor: executor,
-				log:           logFn,
-			}
-		}
-		return executor
+
+	executor := getter.RetryExecutor()
+	if executor == nil {
+		return nil
 	}
-	return nil
+
+	if logFn != nil {
+		return &debugRetryExecutor{
+			RetryExecutor: executor,
+			log:           logFn,
+		}
+	}
+	return executor
 }
 
-// debugRetryExecutor wraps a RetryExecutor to preserve debug logging.
-type debugRetryExecutor struct {
-	RetryExecutor
-	log func(context.Context, ...any)
-}
-
-// Do executes the operation with debug logging preserved.
-func (d *debugRetryExecutor) Do(
-	ctx context.Context,
-	fn func(ctx context.Context, drv dialect.Driver) error,
-	opts ...any,
-) error {
-	return d.RetryExecutor.Do(
-		ctx,
-		func(ctx context.Context, drv dialect.Driver) error {
-			return fn(ctx, dialect.DebugWithContext(drv, d.log))
-		},
-		opts...,
-	)
-}
-
-// DoTx executes the operation within a transaction with debug logging preserved.
-func (d *debugRetryExecutor) DoTx(
-	ctx context.Context,
-	fn func(ctx context.Context, drv dialect.Driver) error,
-	opts ...any,
-) error {
-	return d.RetryExecutor.DoTx(
-		ctx,
-		func(ctx context.Context, drv dialect.Driver) error {
-			return fn(ctx, dialect.DebugWithContext(drv, d.log))
-		},
-		opts...,
-	)
+// unwrapDebugDriver extracts the underlying driver and log function from a DebugDriver.
+func unwrapDebugDriver(drv dialect.Driver) (dialect.Driver, func(context.Context, ...any)) {
+	if debugDriver, ok := drv.(*dialect.DebugDriver); ok {
+		return debugDriver.Driver, debugDriver.Log()
+	}
+	return drv, nil
 }
 
 // RetryConfig holds retry configuration for sqlgraph operations.
@@ -121,95 +92,4 @@ func (d *debugRetryExecutor) DoTx(
 type RetryConfig struct {
 	// Options are driver-specific retry options.
 	Options []any
-}
-
-// YDBRetryExecutor implements sqlgraph.YDBRetryExecutor for YDB
-type YDBRetryExecutor struct {
-	db *sql.DB
-}
-
-// Do executes a read-only operation with retry support.
-// It uses ydb-go-sdk's retry.Do which handles YDB-specific retryable errors.
-// Options should be created using retry.WithIdempotent(), retry.WithLabel(), etc.
-func (r *YDBRetryExecutor) Do(
-	ctx context.Context,
-	fn func(ctx context.Context, drv dialect.Driver) error,
-	opts ...any,
-) error {
-	return retry.Do(
-		ctx,
-		r.db,
-		func(ctx context.Context, conn *sql.Conn) error {
-			return fn(ctx, newConnRetryDriver(conn))
-		},
-		retry.WithDoRetryOptions(toRetryOptions(opts)...),
-	)
-}
-
-// DoTx executes the operation within a transaction with retry support.
-// It uses ydb-go-sdk's retry.DoTx which handles YDB-specific retryable errors.
-// Options should be created using retry.WithIdempotent(), retry.WithLabel(), etc.
-func (r *YDBRetryExecutor) DoTx(
-	ctx context.Context,
-	fn func(ctx context.Context, drv dialect.Driver) error,
-	opts ...any,
-) error {
-	return retry.DoTx(
-		ctx,
-		r.db,
-		func(ctx context.Context, tx *sql.Tx) error {
-			return fn(ctx, newTxRetryDriver(tx))
-		},
-		retry.WithDoTxRetryOptions(toRetryOptions(opts)...),
-	)
-}
-
-// toRetryOptions converts a slice of any options to retry.Option slice
-func toRetryOptions(opts []any) []retry.Option {
-	retryOpts := make([]retry.Option, 0, len(opts))
-	for _, opt := range opts {
-		if ro, ok := opt.(retry.Option); ok {
-			retryOpts = append(retryOpts, ro)
-		}
-	}
-	return retryOpts
-}
-
-// ydbRetryDriver is designed for use only in sqlgraph,
-// specifically - in retry.DoTx callbacks
-type ydbRetryDriver struct {
-	Conn
-}
-
-var _ dialect.Driver = (*ydbRetryDriver)(nil)
-
-// newConnRetryDriver creates a new RetryDriver from a database connection.
-func newConnRetryDriver(conn *sql.Conn) *ydbRetryDriver {
-	return &ydbRetryDriver{
-		Conn: Conn{ExecQuerier: conn},
-	}
-}
-
-// newTxRetryDriver creates a new RetryDriver from a transaction.
-func newTxRetryDriver(tx *sql.Tx) *ydbRetryDriver {
-	return &ydbRetryDriver{
-		Conn: Conn{ExecQuerier: tx},
-	}
-}
-
-// sqlgraph creates nested transactions in several methods.
-// But YDB doesnt support nested transactions.
-// Therefore, this methods returns no-op tx
-func (d *ydbRetryDriver) Tx(ctx context.Context) (dialect.Tx, error) {
-	return dialect.NopTx(d), nil
-}
-
-// Close is a no-op for RetryDriver since retry.DoTx manages the transaction lifecycle.
-func (d *ydbRetryDriver) Close() error {
-	return nil
-}
-
-// Dialect returns the YDB dialect name.
-func (d *ydbRetryDriver) Dialect() string {
-	return dialect.YDB
 }
