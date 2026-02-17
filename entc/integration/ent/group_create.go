@@ -26,7 +26,7 @@ type GroupCreate struct {
 	config
 	mutation    *GroupMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -633,7 +633,7 @@ type GroupCreateBulk struct {
 	config
 	err         error
 	builders    []*GroupCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

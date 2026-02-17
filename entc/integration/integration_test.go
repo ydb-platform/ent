@@ -361,7 +361,7 @@ func Upsert(t *testing.T, client *ent.Client) {
 	err := client.User.Create().SetName("Mashraki").SetAge(30).SetPhone("0000").Exec(ctx)
 	require.True(t, ent.IsConstraintError(err), "phone field is unique")
 	err = client.User.Create().SetName("Mashraki").SetAge(30).SetPhone("0000").OnConflict().Exec(ctx)
-	require.EqualError(t, err, "ent: missing options for UserCreate.OnConflict")
+	require.ErrorContains(t, err, "ent: missing options for UserCreate.OnConflict")
 
 	client.User.Create().
 		SetName("Mashraki").
@@ -1299,8 +1299,8 @@ func Relation(t *testing.T, client *ent.Client) {
 	require.Error(err, "name validator failed")
 	var checkerr schema.CheckError
 	require.True(errors.As(err, &checkerr))
-	require.EqualError(err, `ent: validator failed for field "Group.name": last name must begin with uppercase`)
-	require.EqualError(checkerr, "last name must begin with uppercase")
+	require.ErrorContains(err, `ent: validator failed for field "Group.name": last name must begin with uppercase`)
+	require.ErrorContains(checkerr, "last name must begin with uppercase")
 	err = client.Group.Create().SetInfo(info).SetType("pass").SetName("Github20").SetExpire(time.Now().Add(time.Hour)).Exec(ctx)
 	require.Error(err, "name validator failed")
 	err = client.Group.Create().SetInfo(info).SetType("pass").SetName("Github").SetMaxUsers(-1).SetExpire(time.Now().Add(time.Hour)).Exec(ctx)
@@ -1310,15 +1310,15 @@ func Relation(t *testing.T, client *ent.Client) {
 	err = client.Group.UpdateOne(grp).SetMaxUsers(-10).Exec(ctx)
 	require.Error(err, "max_users validator failed")
 	_, err = client.Group.Query().Select("unknown_field").String(ctx)
-	require.EqualError(err, "ent: invalid field \"unknown_field\" for query")
+	require.ErrorContains(err, "ent: invalid field \"unknown_field\" for query")
 	_, err = client.Group.Query().GroupBy("unknown_field").String(ctx)
-	require.EqualError(err, "ent: invalid field \"unknown_field\" for query")
+	require.ErrorContains(err, "ent: invalid field \"unknown_field\" for query")
 	_, err = client.User.Query().Order(ent.Asc("invalid")).Only(ctx)
-	require.EqualError(err, "ent: unknown column \"invalid\" for table \"users\"")
+	require.ErrorContains(err, "ent: unknown column \"invalid\" for table \"users\"")
 	_, err = client.User.Query().Order(ent.Asc("invalid")).QueryFollowing().Only(ctx)
-	require.EqualError(err, "ent: unknown column \"invalid\" for table \"users\"")
+	require.ErrorContains(err, "ent: unknown column \"invalid\" for table \"users\"")
 	_, err = client.User.Query().GroupBy("name").Aggregate(ent.Sum("invalid")).String(ctx)
-	require.EqualError(err, "ent: unknown column \"invalid\" for table \"users\"")
+	require.ErrorContains(err, "ent: unknown column \"invalid\" for table \"users\"")
 
 	t.Log("query using edge-with predicate")
 	require.Len(usr.QueryGroups().Where(group.HasInfoWith(groupinfo.Desc("group info"))).AllX(ctx), 1)

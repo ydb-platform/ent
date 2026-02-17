@@ -40,7 +40,7 @@ type GroupQuery struct {
 	withNamedFiles   map[string]*FileQuery
 	withNamedBlocked map[string]*UserQuery
 	withNamedUsers   map[string]*UserQuery
-	retryConfig      sqlgraph.RetryConfig
+	retryConfig      sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)

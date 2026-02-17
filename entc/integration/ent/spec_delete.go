@@ -21,7 +21,7 @@ type SpecDelete struct {
 	config
 	hooks       []Hook
 	mutation    *SpecMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SpecDelete builder.

@@ -21,7 +21,7 @@ type CommentDelete struct {
 	config
 	hooks       []Hook
 	mutation    *CommentMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the CommentDelete builder.

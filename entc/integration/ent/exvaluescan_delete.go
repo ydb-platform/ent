@@ -21,7 +21,7 @@ type ExValueScanDelete struct {
 	config
 	hooks       []Hook
 	mutation    *ExValueScanMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the ExValueScanDelete builder.

@@ -2,10 +2,11 @@
 // This source code is licensed under the Apache 2.0 license found
 // in the LICENSE file in the root directory of this source tree.
 
-package sqlgraph
+package sql
 
 import (
 	"context"
+	"database/sql"
 
 	"entgo.io/ent/dialect"
 )
@@ -31,6 +32,18 @@ type RetryExecutor interface {
 	) error
 }
 
+// NewRetryExecutor creates a new RetryExecutor with the given database connection
+func NewRetryExecutor(
+	sqlDialect string,
+	db *sql.DB,
+) RetryExecutor {
+	if sqlDialect == dialect.YDB && db != nil {
+		return &YDBRetryExecutor{db: db}
+	} else {
+		return nil
+	}
+}
+
 // RetryExecutorGetter is an optional interface that drivers can implement to provide
 // a RetryExecutor for automatic retry handling.
 // If a driver implements this interface,
@@ -41,12 +54,37 @@ type RetryExecutorGetter interface {
 	RetryExecutor() RetryExecutor
 }
 
-// getRetryExecutor returns the RetryExecutor for the given driver if available.
-func getRetryExecutor(drv dialect.Driver) RetryExecutor {
-	if reg, ok := drv.(RetryExecutorGetter); ok {
-		return reg.RetryExecutor()
+// GetRetryExecutor returns the RetryExecutor for the given driver if available.
+// If the driver is wrapped with a DebugDriver, the returned executor will preserve
+// debug logging by wrapping the driver passed to callback functions.
+func GetRetryExecutor(drv dialect.Driver) RetryExecutor {
+	drv, logFn := unwrapDebugDriver(drv)
+
+	getter, ok := drv.(RetryExecutorGetter)
+	if !ok {
+		return nil
 	}
-	return nil
+
+	executor := getter.RetryExecutor()
+	if executor == nil {
+		return nil
+	}
+
+	if logFn != nil {
+		return &debugRetryExecutor{
+			RetryExecutor: executor,
+			log:           logFn,
+		}
+	}
+	return executor
+}
+
+// unwrapDebugDriver extracts the underlying driver and log function from a DebugDriver.
+func unwrapDebugDriver(drv dialect.Driver) (dialect.Driver, func(context.Context, ...any)) {
+	if debugDriver, ok := drv.(*dialect.DebugDriver); ok {
+		return debugDriver.Driver, debugDriver.Log()
+	}
+	return drv, nil
 }
 
 // RetryConfig holds retry configuration for sqlgraph operations.

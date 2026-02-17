@@ -21,7 +21,7 @@ type EpisodeDelete struct {
 	config
 	hooks       []Hook
 	mutation    *EpisodeMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the EpisodeDelete builder.

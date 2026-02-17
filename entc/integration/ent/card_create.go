@@ -25,7 +25,7 @@ type CardCreate struct {
 	config
 	mutation    *CardMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -528,7 +528,7 @@ type CardCreateBulk struct {
 	config
 	err         error
 	builders    []*CardCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

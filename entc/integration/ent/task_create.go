@@ -24,7 +24,7 @@ type TaskCreate struct {
 	config
 	mutation    *TaskMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -690,7 +690,7 @@ type TaskCreateBulk struct {
 	config
 	err         error
 	builders    []*TaskCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

@@ -21,7 +21,7 @@ type PCDelete struct {
 	config
 	hooks       []Hook
 	mutation    *PCMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the PCDelete builder.

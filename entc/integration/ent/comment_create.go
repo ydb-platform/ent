@@ -23,7 +23,7 @@ type CommentCreate struct {
 	config
 	mutation    *CommentMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -571,7 +571,7 @@ type CommentCreateBulk struct {
 	config
 	err         error
 	builders    []*CommentCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

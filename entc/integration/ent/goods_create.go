@@ -22,7 +22,7 @@ type GoodsCreate struct {
 	config
 	mutation    *GoodsMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -219,7 +219,7 @@ type GoodsCreateBulk struct {
 	config
 	err         error
 	builders    []*GoodsCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

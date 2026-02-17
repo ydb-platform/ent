@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/examples/ydb/ent/episode"
 	"entgo.io/ent/examples/ydb/ent/season"
@@ -23,7 +24,7 @@ type EpisodeCreate struct {
 	config
 	mutation    *EpisodeMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // SetSeasonID sets the "season_id" field.
@@ -179,7 +180,7 @@ type EpisodeCreateBulk struct {
 	config
 	err         error
 	builders    []*EpisodeCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Save creates the Episode entities in the database.

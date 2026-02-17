@@ -22,7 +22,7 @@ type TaskDelete struct {
 	config
 	hooks       []Hook
 	mutation    *TaskMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the TaskDelete builder.

@@ -21,7 +21,7 @@ type FileTypeDelete struct {
 	config
 	hooks       []Hook
 	mutation    *FileTypeMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the FileTypeDelete builder.

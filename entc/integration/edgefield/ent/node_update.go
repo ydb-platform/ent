@@ -214,7 +214,7 @@ func (_u *NodeUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{node.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
@@ -449,7 +449,7 @@ func (_u *NodeUpdateOne) sqlSave(ctx context.Context) (_node *Node, err error) {
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{node.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}

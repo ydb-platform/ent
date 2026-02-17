@@ -18,7 +18,6 @@ import (
 
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql"
-	"entgo.io/ent/dialect/ydb"
 	"entgo.io/ent/examples/encryptfield/ent/user"
 	"gocloud.dev/secrets"
 )
@@ -114,15 +113,7 @@ func SecretsKeeper(v *secrets.Keeper) Option {
 func Open(driverName, dataSourceName string, options ...Option) (*Client, error) {
 	switch driverName {
 	case dialect.MySQL, dialect.Postgres, dialect.SQLite, dialect.YDB:
-		var (
-			drv dialect.Driver
-			err error
-		)
-		if driverName == dialect.YDB {
-			drv, err = ydb.Open(context.Background(), dataSourceName)
-		} else {
-			drv, err = sql.Open(driverName, dataSourceName)
-		}
+		drv, err := sql.Open(driverName, dataSourceName)
 		if err != nil {
 			return nil, err
 		}

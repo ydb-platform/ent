@@ -23,7 +23,7 @@ type LicenseCreate struct {
 	config
 	mutation    *LicenseMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -330,7 +330,7 @@ type LicenseCreateBulk struct {
 	config
 	err         error
 	builders    []*LicenseCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

@@ -21,7 +21,7 @@ type APIDelete struct {
 	config
 	hooks       []Hook
 	mutation    *APIMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the APIDelete builder.

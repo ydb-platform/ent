@@ -21,7 +21,7 @@ type LicenseDelete struct {
 	config
 	hooks       []Hook
 	mutation    *LicenseMutation
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the LicenseDelete builder.

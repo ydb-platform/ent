@@ -2,31 +2,25 @@
 // This source code is licensed under the Apache 2.0 license found
 // in the LICENSE file in the root directory of this source tree.
 
-package ydb
+package sql
 
 import (
 	"context"
 	"database/sql"
 
 	"entgo.io/ent/dialect"
-	entSql "entgo.io/ent/dialect/sql"
 	"github.com/ydb-platform/ydb-go-sdk/v3/retry"
 )
 
-// RetryExecutor implements sqlgraph.RetryExecutor for YDB
-type RetryExecutor struct {
+// YDBRetryExecutor implements sqlgraph.YDBRetryExecutor for YDB
+type YDBRetryExecutor struct {
 	db *sql.DB
-}
-
-// NewRetryExecutor creates a new RetryExecutor with the given database connection
-func NewRetryExecutor(db *sql.DB) *RetryExecutor {
-	return &RetryExecutor{db: db}
 }
 
 // Do executes a read-only operation with retry support.
 // It uses ydb-go-sdk's retry.Do which handles YDB-specific retryable errors.
 // Options should be created using retry.WithIdempotent(), retry.WithLabel(), etc.
-func (r *RetryExecutor) Do(
+func (r *YDBRetryExecutor) Do(
 	ctx context.Context,
 	fn func(ctx context.Context, drv dialect.Driver) error,
 	opts ...any,
@@ -35,7 +29,7 @@ func (r *RetryExecutor) Do(
 		ctx,
 		r.db,
 		func(ctx context.Context, conn *sql.Conn) error {
-			return fn(ctx, NewRetryDriver(conn))
+			return fn(ctx, newConnRetryDriver(conn))
 		},
 		retry.WithDoRetryOptions(toRetryOptions(opts)...),
 	)
@@ -44,7 +38,7 @@ func (r *RetryExecutor) Do(
 // DoTx executes the operation within a transaction with retry support.
 // It uses ydb-go-sdk's retry.DoTx which handles YDB-specific retryable errors.
 // Options should be created using retry.WithIdempotent(), retry.WithLabel(), etc.
-func (r *RetryExecutor) DoTx(
+func (r *YDBRetryExecutor) DoTx(
 	ctx context.Context,
 	fn func(ctx context.Context, drv dialect.Driver) error,
 	opts ...any,
@@ -53,7 +47,7 @@ func (r *RetryExecutor) DoTx(
 		ctx,
 		r.db,
 		func(ctx context.Context, tx *sql.Tx) error {
-			return fn(ctx, NewTxRetryDriver(tx))
+			return fn(ctx, newTxRetryDriver(tx))
 		},
 		retry.WithDoTxRetryOptions(toRetryOptions(opts)...),
 	)
@@ -70,41 +64,41 @@ func toRetryOptions(opts []any) []retry.Option {
 	return retryOpts
 }
 
-// RetryDriver is designed for use only in sqlgraph,
+// ydbRetryDriver is designed for use only in sqlgraph,
 // specifically - in retry.DoTx callbacks
-type RetryDriver struct {
-	entSql.Conn
+type ydbRetryDriver struct {
+	Conn
 }
 
-var _ dialect.Driver = (*RetryDriver)(nil)
+var _ dialect.Driver = (*ydbRetryDriver)(nil)
 
-// NewTxRetryDriver creates a new RetryDriver from a transaction.
-func NewTxRetryDriver(tx *sql.Tx) *RetryDriver {
-	return &RetryDriver{
-		Conn: entSql.Conn{ExecQuerier: tx},
+// newConnRetryDriver creates a new RetryDriver from a database connection.
+func newConnRetryDriver(conn *sql.Conn) *ydbRetryDriver {
+	return &ydbRetryDriver{
+		Conn: Conn{ExecQuerier: conn},
 	}
 }
 
-// NewRetryDriver creates a new RetryDriver from a database connection.
-func NewRetryDriver(conn *sql.Conn) *RetryDriver {
-	return &RetryDriver{
-		Conn: entSql.Conn{ExecQuerier: conn},
+// newTxRetryDriver creates a new RetryDriver from a transaction.
+func newTxRetryDriver(tx *sql.Tx) *ydbRetryDriver {
+	return &ydbRetryDriver{
+		Conn: Conn{ExecQuerier: tx},
 	}
 }
 
 // sqlgraph creates nested transactions in several methods.
 // But YDB doesnt support nested transactions.
 // Therefore, this methods returns no-op tx
-func (d *RetryDriver) Tx(ctx context.Context) (dialect.Tx, error) {
+func (d *ydbRetryDriver) Tx(ctx context.Context) (dialect.Tx, error) {
 	return dialect.NopTx(d), nil
 }
 
 // Close is a no-op for RetryDriver since retry.DoTx manages the transaction lifecycle.
-func (d *RetryDriver) Close() error {
+func (d *ydbRetryDriver) Close() error {
 	return nil
 }
 
 // Dialect returns the YDB dialect name.
-func (d *RetryDriver) Dialect() string {
+func (d *ydbRetryDriver) Dialect() string {
 	return dialect.YDB
 }

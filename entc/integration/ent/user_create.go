@@ -26,7 +26,7 @@ type UserCreate struct {
 	config
 	mutation    *UserMutation
 	hooks       []Hook
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 
@@ -1281,7 +1281,7 @@ type UserCreateBulk struct {
 	config
 	err         error
 	builders    []*UserCreate
-	retryConfig sqlgraph.RetryConfig
+	retryConfig sql.RetryConfig
 	conflict    []sql.ConflictOption
 }
 

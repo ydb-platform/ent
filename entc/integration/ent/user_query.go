@@ -52,7 +52,7 @@ type UserQuery struct {
 	withNamedFollowers map[string]*UserQuery
 	withNamedFollowing map[string]*UserQuery
 	withNamedChildren  map[string]*UserQuery
-	retryConfig        sqlgraph.RetryConfig
+	retryConfig        sql.RetryConfig
 	// intermediate query (i.e. traversal path).
 	sql  *sql.Selector
 	path func(context.Context) (*sql.Selector, error)
