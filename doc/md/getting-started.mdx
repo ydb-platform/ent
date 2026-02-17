@@ -117,6 +117,7 @@ values={[
 {label: 'SQLite', value: 'sqlite'},
 {label: 'PostgreSQL', value: 'postgres'},
 {label: 'MySQL (MariaDB)', value: 'mysql'},
+{label: 'YDB', value: 'ydb'},
 ]}>
 <TabItem value="sqlite">
 
@@ -206,6 +207,38 @@ func main() {
 	// highlight-end
 }
 ```
+
+</TabItem>
+<TabItem value="ydb">
+
+```go title="entdemo/start.go"
+package main
+
+import (
+	"context"
+	"log"
+
+	"entdemo/ent"
+)
+
+func main() {
+	client, err := ent.Open("ydb", "grpc://localhost:2136/local")
+	if err != nil {
+		log.Fatalf("failed opening connection to ydb: %v", err)
+	}
+	defer client.Close()
+	// Run the auto migration tool.
+	// highlight-start
+	if err := client.Schema.Create(context.Background()); err != nil {
+		log.Fatalf("failed creating schema resources: %v", err)
+	}
+	// highlight-end
+}
+```
+
+:::note
+YDB support is in preview. See the [YDB documentation](ydb.md) for details on retry handling and YDB-specific features.
+:::
 
 </TabItem>
 </Tabs>
