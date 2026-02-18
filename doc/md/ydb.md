@@ -45,11 +45,47 @@ func main() {
 }
 ```
 
+## Interactive & Non-Interactive Transactions
+
+It is important to say that every request in YDB is executed in a transaction.
+YDB supports two modes of working with transactions, and ent uses both depending on the API you choose.
+
+### Non-interactive transactions
+
+When you use the standard CRUD builders (`.Create()`, `.Query()`, `.Update()`, `.Delete()`), ent executes them through ydb-go-sdk's retry helpers:
+
+- **Write operations** (Create, Update, Delete) go through
+  [`retry.DoTx`](https://pkg.go.dev/github.com/ydb-platform/ydb-go-sdk/v3/retry#DoTx) — the SDK
+  begins a transaction, executes the operation as a **callback**, commits, and on a transient error
+  rolls back and re-executes the callback from scratch.
+- **Read operations** (Query) go through
+  [`retry.Do`](https://pkg.go.dev/github.com/ydb-platform/ydb-go-sdk/v3/retry#Do) — the SDK
+  obtains a connection, executes the read callback, and retries on transient errors. No explicit
+  transaction is created; the read runs with an implicit snapshot.
+
+This is the recommended way to work with YDB through ent. Automatic retries and session management
+are handled transparently.
+
+### Interactive transactions
+
+When you call `Client.BeginTx()`, ent opens a transaction via the standard `database/sql` API and **returns a `Tx` object** to the caller. You then perform operations on it and manually call
+`Commit()` or `Rollback()`. In this model:
+
+- There is **no callback** for the SDK to re-execute, so automatic retries are not possible.
+- Session and transaction lifetime are managed by your code.
+
+Use interactive transactions only when you need explicit control over commit/rollback boundaries
+that can't be expressed through the standard builders.
+
 ## Automatic Retry Mechanism
 
-YDB requires special handling for transient errors (network issues, temporary unavailability, etc.).
+Since YDB is a distributed database, it requires special handling for transient errors (network issues, temporary unavailability, etc.).
 The ent YDB driver integrates with [ydb-go-sdk's retry package](https://pkg.go.dev/github.com/ydb-platform/ydb-go-sdk/v3/retry)
 to automatically handle these scenarios.
+
+:::note
+However, ent does not use automatic retries when you create an interactive transaction using `Client.BeginTx()`. [Read more](ydb.md#no-automatic-retries-when-using-clientbegintx).
+:::
 
 ### Using WithRetryOptions
 
@@ -95,60 +131,28 @@ Common retry options from `ydb-go-sdk`:
 | `retry.WithLabel(string)` | Add a label for debugging/tracing |
 | `retry.WithTrace(trace.Retry)` | Enable retry tracing |
 
-## YDB-Specific SQL Features
-
-The ent SQL builder supports several YDB-specific SQL constructs that are used internally
-or can be leveraged for advanced use cases.
-
-### UPSERT and REPLACE
-
-YDB doesn't support the standard `ON CONFLICT` clause. Instead, it uses `UPSERT` and `REPLACE` statements:
-
-- **UPSERT**: Inserts a new row or updates an existing row if a conflict occurs
-- **REPLACE**: Replaces the entire row if a conflict occurs
-
-Ent automatically uses `UPSERT` when you configure `OnConflict` options in your create operations.
-
-### BATCH Operations
-
-For large tables, YDB provides `BATCH UPDATE` and `BATCH DELETE` statements that process data
-in batches, minimizing lock invalidation risk. These are used internally by ent when appropriate.
-
-### Special JOIN Types
-
-YDB supports additional JOIN types beyond the standard SQL joins:
-
-| Join Type | Description |
-|-----------|-------------|
-| `LEFT SEMI JOIN` | Returns rows from left table that have matches in right table |
-| `RIGHT SEMI JOIN` | Returns rows from right table that have matches in left table |
-| `LEFT ONLY JOIN` | Returns rows from left table that have no matches in right table |
-| `RIGHT ONLY JOIN` | Returns rows from right table that have no matches in left table |
-| `EXCLUSION JOIN` | Returns rows that don't have matches in either table |
-
-### VIEW Clause for Secondary Indexes
-
-YDB allows explicit use of secondary indexes via the `VIEW` clause. This is an optimization
-hint that tells YDB to use a specific index for the query.
-
-### Named Parameters
-
-YDB uses named parameters with the `$paramName` syntax (e.g., `$p1`, `$p2`) instead of
-positional placeholders. Ent handles this automatically.
-
 ## Known Limitations
 
 When using ent with YDB, be aware of the following limitations:
 
-### No Correlated Subqueries
+### No automatic retries when using Client.BeginTx
 
-YDB doesn't support correlated subqueries with `EXISTS` or `NOT EXISTS`. Ent automatically
-rewrites such queries to use `IN` with subqueries instead.
+`Client.BeginTx()` returns a transaction object to the caller instead of accepting a callback,
+so the retry mechanism from ydb-go-sdk cannot be applied. See
+[Interactive transactions](ydb.md#interactive-transactions) for a detailed explanation.
+
+If you still need interactive transactions, you may write a retry wrapper manually, as done in
+[ydb-go-sdk's examples](https://github.com/ydb-platform/ydb-go-sdk/blob/master/examples/basic/database/sql/series.go).
 
 ### No Nested Transactions
 
 YDB uses flat transactions and doesn't support nested transactions. The ent YDB driver
 handles this by returning a no-op transaction when nested transactions are requested.
+
+### No Correlated Subqueries
+
+YDB doesn't support correlated subqueries with `EXISTS` or `NOT EXISTS`. Ent automatically
+rewrites such queries to use `IN` with subqueries instead.
 
 ### Float/Double Index Restriction
 
@@ -159,11 +163,6 @@ float field, it will be skipped during migration.
 
 YDB doesn't support enum types in DDL statements. Ent maps enum fields to `Utf8` (string)
 type, with validation handled at the application level.
-
-### RowsAffected Behavior
-
-YDB's `RowsAffected()` doesn't return accurate counts. The ent driver uses the `RETURNING`
-clause internally to count affected rows when needed.
 
 ### Primary Key Requirements
 
