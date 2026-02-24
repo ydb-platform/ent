@@ -15,7 +15,7 @@ YDB support is currently in **preview** and requires the [Atlas migration engine
 
 ## Opening a Connection
 
-To connect to YDB, use the `ydb.Open()` function from the `entgo.io/ent/dialect/ydb` package:
+To connect to YDB, use the standard `ent.Open()` function with the `"ydb"` dialect:
 
 ```go
 package main
@@ -25,8 +25,6 @@ import (
 	"log"
 
 	"entdemo/ent"
-
-	"entgo.io/ent/dialect/ydb"
 )
 
 func main() {
