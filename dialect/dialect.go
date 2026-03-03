@@ -20,6 +20,7 @@ const (
 	SQLite   = "sqlite3"
 	Postgres = "postgres"
 	Gremlin  = "gremlin"
+	YDB      = "ydb"
 )
 
 // ExecQuerier wraps the 2 database operations.
@@ -85,6 +86,11 @@ func Debug(d Driver, logger ...func(...any)) Driver {
 func DebugWithContext(d Driver, logger func(context.Context, ...any)) Driver {
 	drv := &DebugDriver{d, logger}
 	return drv
+}
+
+// Log returns the log function used by this DebugDriver.
+func (d *DebugDriver) Log() func(context.Context, ...any) {
+	return d.log
 }
 
 // Exec logs its params and calls the underlying driver Exec method.

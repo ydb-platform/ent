@@ -18,6 +18,7 @@ import (
 	"ariga.io/atlas/sql/postgres"
 	"ariga.io/atlas/sql/schema"
 	"ariga.io/atlas/sql/sqlite"
+	"ariga.io/atlas/sql/ydb"
 	entdialect "entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql"
@@ -585,6 +586,14 @@ var drivers = func(v string) map[string]driver {
 			},
 			postgres.DefaultDiff,
 			postgres.DefaultPlan,
+		},
+		entdialect.YDB: {
+			&YDB{
+				version: v,
+				Driver:  nopDriver{dialect: entdialect.YDB},
+			},
+			ydb.DefaultDiff,
+			ydb.DefaultPlan,
 		},
 	}
 }

@@ -22,9 +22,10 @@ import (
 // SpecUpdate is the builder for updating Spec entities.
 type SpecUpdate struct {
 	config
-	hooks     []Hook
-	mutation  *SpecMutation
-	modifiers []func(*sql.UpdateBuilder)
+	hooks       []Hook
+	mutation    *SpecMutation
+	modifiers   []func(*sql.UpdateBuilder)
+	retryConfig sql.RetryConfig
 }
 
 // Where appends a list predicates to the SpecUpdate builder.
@@ -107,6 +108,13 @@ func (_u *SpecUpdate) Modify(modifiers ...func(u *sql.UpdateBuilder)) *SpecUpdat
 	return _u
 }
 
+// WithRetryOptions sets the retry options for the update operation.
+// For YDB, these should be retry.Option values from ydb-go-sdk.
+func (_u *SpecUpdate) WithRetryOptions(opts ...any) *SpecUpdate {
+	_u.retryConfig.Options = opts
+	return _u
+}
+
 func (_u *SpecUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	_spec := sqlgraph.NewUpdateSpec(spec.Table, spec.Columns, sqlgraph.NewFieldSpec(spec.FieldID, field.TypeInt))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
@@ -162,8 +170,9 @@ func (_u *SpecUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	_spec.AddModifiers(_u.modifiers...)
+	_spec.RetryConfig = _u.retryConfig
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{spec.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}
@@ -177,10 +186,11 @@ func (_u *SpecUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 // SpecUpdateOne is the builder for updating a single Spec entity.
 type SpecUpdateOne struct {
 	config
-	fields    []string
-	hooks     []Hook
-	mutation  *SpecMutation
-	modifiers []func(*sql.UpdateBuilder)
+	fields      []string
+	hooks       []Hook
+	mutation    *SpecMutation
+	modifiers   []func(*sql.UpdateBuilder)
+	retryConfig sql.RetryConfig
 }
 
 // AddCardIDs adds the "card" edge to the Card entity by IDs.
@@ -270,6 +280,13 @@ func (_u *SpecUpdateOne) Modify(modifiers ...func(u *sql.UpdateBuilder)) *SpecUp
 	return _u
 }
 
+// WithRetryOptions sets the retry options for the update operation.
+// For YDB, these should be retry.Option values from ydb-go-sdk.
+func (_u *SpecUpdateOne) WithRetryOptions(opts ...any) *SpecUpdateOne {
+	_u.retryConfig.Options = opts
+	return _u
+}
+
 func (_u *SpecUpdateOne) sqlSave(ctx context.Context) (_node *Spec, err error) {
 	_spec := sqlgraph.NewUpdateSpec(spec.Table, spec.Columns, sqlgraph.NewFieldSpec(spec.FieldID, field.TypeInt))
 	id, ok := _u.mutation.ID()
@@ -342,11 +359,12 @@ func (_u *SpecUpdateOne) sqlSave(ctx context.Context) (_node *Spec, err error) {
 		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	_spec.AddModifiers(_u.modifiers...)
+	_spec.RetryConfig = _u.retryConfig
 	_node = &Spec{config: _u.config}
 	_spec.Assign = _node.assignValues
 	_spec.ScanValues = _node.scanValues
 	if err = sqlgraph.UpdateNode(ctx, _u.driver, _spec); err != nil {
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{spec.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}

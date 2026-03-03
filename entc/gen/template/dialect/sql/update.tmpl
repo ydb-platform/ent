@@ -179,7 +179,7 @@ func ({{ $receiver }} *{{ $builder }}) sqlSave(ctx context.Context) (_node {{ if
 	{{- else }}
 		if _node, err = sqlgraph.UpdateNodes(ctx, {{ $receiver }}.driver, _spec); err != nil {
 	{{- end }}
-		if _, ok := err.(*sqlgraph.NotFoundError); ok {
+		if sqlgraph.IsNotFound(err) {
 			err = &NotFoundError{ {{ $.Package }}.Label}
 		} else if sqlgraph.IsConstraintError(err) {
 			err = &ConstraintError{msg: err.Error(), wrap: err}

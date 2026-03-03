@@ -73,6 +73,11 @@ func TestBuilder(t *testing.T) {
 			wantArgs:  []any{1},
 		},
 		{
+			input:     Dialect(dialect.YDB).Insert("users").Columns("age").Values(1),
+			wantQuery: "INSERT INTO `users` (`age`) VALUES ($p0)",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: 1}},
+		},
+		{
 			input:     Dialect(dialect.Postgres).Insert("users").Columns("age").Values(1).Returning("id"),
 			wantQuery: `INSERT INTO "users" ("age") VALUES ($1) RETURNING "id"`,
 			wantArgs:  []any{1},
@@ -145,6 +150,11 @@ func TestBuilder(t *testing.T) {
 			input:     Dialect(dialect.SQLite).Update("users").Set("name", "foo").Schema("mydb"),
 			wantQuery: "UPDATE `users` SET `name` = ?",
 			wantArgs:  []any{"foo"},
+		},
+		{
+			input:     Dialect(dialect.YDB).Update("users").Set("name", "foo"),
+			wantQuery: "UPDATE `users` SET `name` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "foo"}},
 		},
 		{
 			input:     Update("users").Set("name", "foo").Set("age", 10),
@@ -484,6 +494,14 @@ func TestBuilder(t *testing.T) {
 			wantArgs:  []any{"Ariel"},
 		},
 		{
+			input: Dialect(dialect.YDB).
+				Select().
+				From(Table("users")).
+				Where(EQ("name", "Alex")),
+			wantQuery: "SELECT * FROM `users` WHERE `name` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "Alex"}},
+		},
+		{
 			input: Select().
 				From(Table("users")).
 				Where(Or(EQ("name", "BAR"), EQ("name", "BAZ"))),
@@ -531,6 +549,12 @@ func TestBuilder(t *testing.T) {
 				Delete("users").
 				Where(NotNull("parent_id")).
 				Schema("mydb"),
+			wantQuery: "DELETE FROM `users` WHERE `parent_id` IS NOT NULL",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(NotNull("parent_id")),
 			wantQuery: "DELETE FROM `users` WHERE `parent_id` IS NOT NULL",
 		},
 		{
@@ -711,6 +735,18 @@ func TestBuilder(t *testing.T) {
 					On(t1.C("id"), t2.C("user_id"))
 			}(),
 			wantQuery: `SELECT "u"."id", "g"."name" FROM "users" AS "u" JOIN "groups" AS "g" ON "u"."id" = "g"."user_id"`,
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("users").As("u")
+				t2 := d.Table("groups").As("g")
+				return d.Select(t1.C("id"), t2.C("name")).
+					From(t1).
+					Join(t2).
+					On(t1.C("id"), t2.C("user_id"))
+			}(),
+			wantQuery: "SELECT `u`.`id` AS `id`, `g`.`name` AS `name` FROM `users` AS `u` JOIN `groups` AS `g` ON `u`.`id` = `g`.`user_id`",
 		},
 		{
 			input: func() Querier {
@@ -1093,6 +1129,11 @@ func TestBuilder(t *testing.T) {
 			wantQuery: `SELECT COUNT(*) FROM "users"`,
 		},
 		{
+			input: Dialect(dialect.YDB).
+				Select().Count().From(Table("users")),
+			wantQuery: "SELECT COUNT(*) AS `count` FROM `users`",
+		},
+		{
 			input:     Select().Count(Distinct("id")).From(Table("users")),
 			wantQuery: "SELECT COUNT(DISTINCT `id`) FROM `users`",
 		},
@@ -1160,6 +1201,13 @@ func TestBuilder(t *testing.T) {
 			wantQuery: `SELECT "name", COUNT(*) FROM "users" GROUP BY "name"`,
 		},
 		{
+			input: Dialect(dialect.YDB).
+				Select("name", Count("*")).
+				From(Table("users")).
+				GroupBy("name"),
+			wantQuery: "SELECT `name`, COUNT(*) AS `count` FROM `users` GROUP BY `name`",
+		},
+		{
 			input: Select("name", Count("*")).
 				From(Table("users")).
 				GroupBy("name").
@@ -1201,6 +1249,14 @@ func TestBuilder(t *testing.T) {
 				From(Table("users")).
 				Limit(1),
 			wantQuery: `SELECT * FROM "users" LIMIT 1`,
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("*").
+				From(Table("users")).
+				OrderBy("id").
+				Limit(10),
+			wantQuery: "SELECT * FROM `users` ORDER BY `id` LIMIT 10",
 		},
 		{
 			input:     Select("age").Distinct().From(Table("users")),
@@ -1475,6 +1531,273 @@ AND "users"."id1" < "users"."id2") AND "users"."id1" <= "users"."id2"`, "\n", ""
 				From(Select("name", "age").From(Table("users"))),
 			wantQuery: "SELECT `name` FROM (SELECT `name`, `age` FROM `users`)",
 		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(EQ("id", 1)),
+			wantQuery: "DELETE FROM `users` WHERE `id` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: 1}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(EQ("status", "inactive")).
+				Where(LT("last_login", "2024-01-01")),
+			wantQuery: "DELETE FROM `users` WHERE `status` = $p0 AND `last_login` < $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "inactive"},
+				driver.NamedValue{Name: "p1", Value: "2024-01-01"},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(And(
+					EQ("status", "cancelled"),
+					GT("age", 18),
+				)),
+			wantQuery: "DELETE FROM `users` WHERE `status` = $p0 AND `age` > $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "cancelled"},
+				driver.NamedValue{Name: "p1", Value: 18},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("users").
+				Where(Or(
+					EQ("status", "cancelled"),
+					EQ("status", "expired"),
+				)),
+			wantQuery: "DELETE FROM `users` WHERE `status` = $p0 OR `status` = $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "cancelled"},
+				driver.NamedValue{Name: "p1", Value: "expired"},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("orders").
+				Where(EQ("status", "cancelled")).
+				Returning("*"),
+			wantQuery: "DELETE FROM `orders` WHERE `status` = $p0 RETURNING *",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "cancelled"}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Delete("orders").
+				Where(EQ("status", "cancelled")).
+				Returning("order_id", "order_date"),
+			wantQuery: "DELETE FROM `orders` WHERE `status` = $p0 RETURNING `order_id`, `order_date`",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "cancelled"}},
+		},
+		{
+			input:     Dialect(dialect.YDB).Delete("users"),
+			wantQuery: "DELETE FROM `users`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Insert("users").
+				Columns("name", "age").
+				Values("a8m", 10),
+			wantQuery: "INSERT INTO `users` (`name`, `age`) VALUES ($p0, $p1)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "a8m"},
+				driver.NamedValue{Name: "p1", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Update("users").
+				Set("name", "foo").
+				Where(EQ("id", 1)),
+			wantQuery: "UPDATE `users` SET `name` = $p0 WHERE `id` = $p1",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "foo"},
+				driver.NamedValue{Name: "p1", Value: 1},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("*").
+				From(Table("users")).
+				Where(EQ("name", "Alex")),
+			wantQuery: "SELECT * FROM `users` WHERE `name` = $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "Alex"}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Insert("users").
+				Columns("name", "age").
+				Values("a8m", 10).
+				Returning("id"),
+			wantQuery: "INSERT INTO `users` (`name`, `age`) VALUES ($p0, $p1) RETURNING `id`",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "a8m"},
+				driver.NamedValue{Name: "p1", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Insert("users").
+				Columns("name", "age").
+				Values("a8m", 10).
+				Returning("*"),
+			wantQuery: "INSERT INTO `users` (`name`, `age`) VALUES ($p0, $p1) RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "a8m"},
+				driver.NamedValue{Name: "p1", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("users").
+				Columns("id", "name", "age").
+				Values(1, "a8m", 10),
+			wantQuery: "UPSERT INTO `users` (`id`, `name`, `age`) VALUES ($p0, $p1, $p2)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1},
+				driver.NamedValue{Name: "p1", Value: "a8m"},
+				driver.NamedValue{Name: "p2", Value: 10},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("users").
+				Columns("id", "name", "age").
+				Values(1, "a8m", 10).
+				Values(2, "foo", 20),
+			wantQuery: "UPSERT INTO `users` (`id`, `name`, `age`) VALUES ($p0, $p1, $p2), ($p3, $p4, $p5)",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1},
+				driver.NamedValue{Name: "p1", Value: "a8m"},
+				driver.NamedValue{Name: "p2", Value: 10},
+				driver.NamedValue{Name: "p3", Value: 2},
+				driver.NamedValue{Name: "p4", Value: "foo"},
+				driver.NamedValue{Name: "p5", Value: 20},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("orders").
+				Columns("order_id", "status", "amount").
+				Values(1001, "shipped", 500).
+				Returning("*"),
+			wantQuery: "UPSERT INTO `orders` (`order_id`, `status`, `amount`) VALUES ($p0, $p1, $p2) RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 1001},
+				driver.NamedValue{Name: "p1", Value: "shipped"},
+				driver.NamedValue{Name: "p2", Value: 500},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Upsert("users").
+				Columns("user_id", "name", "email").
+				Values(42, "John Doe", "john@example.com").
+				Returning("user_id", "email"),
+			wantQuery: "UPSERT INTO `users` (`user_id`, `name`, `email`) VALUES ($p0, $p1, $p2) RETURNING `user_id`, `email`",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: 42},
+				driver.NamedValue{Name: "p1", Value: "John Doe"},
+				driver.NamedValue{Name: "p2", Value: "john@example.com"},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Update("users").
+				Set("name", "foo").
+				Where(EQ("id", 1)).
+				Returning("*"),
+			wantQuery: "UPDATE `users` SET `name` = $p0 WHERE `id` = $p1 RETURNING *",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "foo"},
+				driver.NamedValue{Name: "p1", Value: 1},
+			},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Update("orders").
+				Set("status", "shipped").
+				Where(LT("order_date", "2023-01-01")).
+				Returning("order_id", "status"),
+			wantQuery: "UPDATE `orders` SET `status` = $p0 WHERE `order_date` < $p1 RETURNING `order_id`, `status`",
+			wantArgs: []any{
+				driver.NamedValue{Name: "p0", Value: "shipped"},
+				driver.NamedValue{Name: "p1", Value: "2023-01-01"},
+			},
+		},
+		{
+			input: func() Querier {
+				t1 := Table("users").As("u")
+				t2 := Table("groups").As("g")
+				return Select(t1.C("id"), t2.C("name")).
+					From(t1).
+					CrossJoin(t2)
+			}(),
+			wantQuery: "SELECT `u`.`id`, `g`.`name` FROM `users` AS `u` CROSS JOIN `groups` AS `g`",
+		},
+		{
+			input: func() Querier {
+				d := Dialect(dialect.YDB)
+				t1 := d.Table("a_table").As("a")
+				t2 := d.Table("b_table").As("b")
+				t3 := d.Table("c_table").As("c")
+				return d.Select(t1.C("value"), t2.C("value"), t3.C("column2")).
+					From(t1).
+					CrossJoin(t2).
+					LeftJoin(t3).
+					OnP(And(EQ(t3.C("ref"), Expr(t1.C("key"))), EQ(t3.C("column1"), Expr(t2.C("value")))))
+			}(),
+			wantQuery: "SELECT `a`.`value` AS `value`, `b`.`value` AS `value`, `c`.`column2` AS `column2` FROM `a_table` AS `a` CROSS JOIN `b_table` AS `b` LEFT JOIN `c_table` AS `c` ON `c`.`ref` = `a`.`key` AND `c`.`column1` = `b`.`value`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("value").
+				From(Table("my_table")).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT `value` FROM `my_table`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("*").
+				From(Table("users")).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT * FROM `users`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("status", "type").
+				From(Table("orders")).
+				Distinct().
+				Where(GT("created_at", "2024-01-01")),
+			wantQuery: "SELECT DISTINCT `status`, `type` FROM `orders` WHERE `created_at` > $p0",
+			wantArgs:  []any{driver.NamedValue{Name: "p0", Value: "2024-01-01"}},
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("category").
+				From(Table("products")).
+				Distinct().
+				OrderBy("category").
+				Limit(10),
+			wantQuery: "SELECT DISTINCT `category` FROM `products` ORDER BY `category` LIMIT 10",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("name", "age").
+				From(Table("users")).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT `name`, `age` FROM `users`",
+		},
+		{
+			input: Dialect(dialect.YDB).
+				Select("email").
+				From(Table("subscribers")).
+				Where(EQ("active", true)).
+				Distinct(),
+			wantQuery: "SELECT DISTINCT `email` FROM `subscribers` WHERE `active`",
+		},
 	}
 	for i, tt := range tests {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -1598,6 +1921,62 @@ func TestSelector_Union(t *testing.T) {
 		Query()
 	require.Equal(t, `SELECT * FROM "users" WHERE "active" UNION SELECT * FROM "old_users1" WHERE "is_active" AND "age" > $1 UNION ALL SELECT * FROM "old_users2" WHERE "is_active" = $2 AND "age" < $3`, query)
 	require.Equal(t, []any{20, "true", 18}, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("key").
+		From(Table("T1")).
+		Union(
+			Dialect(dialect.YDB).
+				Select("key").
+				From(Table("T2")),
+		).
+		Query()
+	require.Equal(t, "SELECT `key` FROM `T1` UNION SELECT `key` FROM `T2`", query)
+	require.Empty(t, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("id", "name").
+		From(Table("users")).
+		Where(EQ("status", "active")).
+		Union(
+			Dialect(dialect.YDB).
+				Select("id", "name").
+				From(Table("users")).
+				Where(EQ("status", "inactive")),
+		).
+		Query()
+	require.Equal(t, "SELECT `id`, `name` FROM `users` WHERE `status` = $p0 UNION SELECT `id`, `name` FROM `users` WHERE `status` = $p1", query)
+	require.Equal(t, []any{
+		driver.NamedValue{Name: "p0", Value: "active"},
+		driver.NamedValue{Name: "p1", Value: "inactive"},
+	}, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("x").
+		UnionAll(Dialect(dialect.YDB).Select("y")).
+		UnionAll(Dialect(dialect.YDB).Select("z")).
+		Query()
+	require.Equal(t, "SELECT `x` UNION ALL SELECT `y` UNION ALL SELECT `z`", query)
+	require.Empty(t, args)
+
+	query, args = Dialect(dialect.YDB).
+		Select("id").
+		From(Table("orders")).
+		Where(EQ("status", "pending")).
+		Union(
+			Dialect(dialect.YDB).
+				Select("id").
+				From(Table("orders")).
+				Where(EQ("status", "processing")),
+		).
+		OrderBy("id").
+		Limit(100).
+		Query()
+	require.Equal(t, "SELECT `id` FROM `orders` WHERE `status` = $p0 UNION SELECT `id` FROM `orders` WHERE `status` = $p1 ORDER BY `id` LIMIT 100", query)
+	require.Equal(t, []any{
+		driver.NamedValue{Name: "p0", Value: "pending"},
+		driver.NamedValue{Name: "p1", Value: "processing"},
+	}, args)
 }
 
 func TestSelector_Except(t *testing.T) {
@@ -1658,6 +2037,34 @@ func TestSelector_Intersect(t *testing.T) {
 		Query()
 	require.Equal(t, `SELECT * FROM "users" WHERE "active" INTERSECT SELECT * FROM "old_users1" WHERE "is_active" AND "age" > $1 INTERSECT ALL SELECT * FROM "old_users2" WHERE "is_active" = $2 AND "age" < $3`, query)
 	require.Equal(t, []any{20, "true", 18}, args)
+}
+
+func TestCreateView_YDB(t *testing.T) {
+	t.Run("Basic view with security_invoker", func(t *testing.T) {
+		d := Dialect(dialect.YDB)
+		query, args := d.CreateView("recent_series").
+			As(
+				d.Select("*").
+					From(Table("db")).
+					Where(GT("release_date", "2020-01-01")),
+			).
+			Query()
+
+		require.Contains(t, query, "CREATE VIEW `recent_series` WITH (security_invoker = TRUE) AS SELECT * FROM `db`")
+		require.Contains(t, query, "WHERE `release_date` > $p0")
+		require.Equal(t, []any{driver.NamedValue{Name: "p0", Value: "2020-01-01"}}, args)
+	})
+
+	t.Run("Non-YDB dialect should not generate WITH clause", func(t *testing.T) {
+		query, _ := Dialect(dialect.Postgres).
+			CreateView("my_view").
+			As(Select("*").From(Table("users"))).
+			Query()
+
+		// Postgres should not have the WITH clause
+		require.NotContains(t, query, "WITH (security_invoker")
+		require.Contains(t, query, `CREATE VIEW "my_view" AS SELECT * FROM "users"`)
+	})
 }
 
 func TestSelector_SetOperatorWithRecursive(t *testing.T) {
@@ -1779,7 +2186,7 @@ func TestSelectWithLock(t *testing.T) {
 		Where(EQ("id", 1)).
 		ForUpdate()
 	s.Query()
-	require.EqualError(t, s.Err(), "sql: SELECT .. FOR UPDATE/SHARE not supported in SQLite")
+	require.Contains(t, s.Err().Error(), "SELECT .. FOR UPDATE/SHARE is not supported")
 }
 
 func TestSelector_UnionOrderBy(t *testing.T) {

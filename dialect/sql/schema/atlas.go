@@ -626,35 +626,73 @@ func (a *Atlas) create(ctx context.Context, tables ...*Table) (err error) {
 	if len(plan.Changes) == 0 {
 		return nil
 	}
-	// Open a transaction for backwards compatibility,
-	// even if the migration is not transactional.
-	tx, err := a.sqlDialect.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	a.atDriver, err = a.sqlDialect.atOpen(tx)
-	if err != nil {
-		return err
-	}
-	// Apply plan (changes).
-	var applier Applier = ApplyFunc(func(ctx context.Context, tx dialect.ExecQuerier, plan *migrate.Plan) error {
-		for _, c := range plan.Changes {
-			if err := tx.Exec(ctx, c.Cmd, c.Args, nil); err != nil {
-				if c.Comment != "" {
-					err = fmt.Errorf("%s: %w", c.Comment, err)
+
+	// YDB requires DDL operations to be executed outside of transactions.
+	if a.sqlDialect.Dialect() == dialect.YDB {
+		applier := ApplyFunc(func(ctx context.Context, conn dialect.ExecQuerier, plan *migrate.Plan) error {
+			for _, change := range plan.Changes {
+				err := conn.Exec(
+					ctx,
+					change.Cmd,
+					change.Args,
+					nil,
+				)
+				if err != nil {
+					return wrapChangeError(change, err)
 				}
-				return err
 			}
+			return nil
+		})
+		if err := a.applyWithHooks(ctx, a.sqlDialect, plan, applier); err != nil {
+			return fmt.Errorf("sql/schema: %w", err)
 		}
 		return nil
-	})
+	} else {
+		// Open a transaction for backwards compatibility,
+		// even if the migration is not transactional.
+		tx, err := a.sqlDialect.Tx(ctx)
+		if err != nil {
+			return err
+		}
+		a.atDriver, err = a.sqlDialect.atOpen(tx)
+		if err != nil {
+			return err
+		}
+		applier := ApplyFunc(func(ctx context.Context, conn dialect.ExecQuerier, plan *migrate.Plan) error {
+			for _, change := range plan.Changes {
+				if err := conn.Exec(ctx, change.Cmd, change.Args, nil); err != nil {
+					return wrapChangeError(change, err)
+				}
+			}
+			return nil
+		})
+		if err := a.applyWithHooks(ctx, tx, plan, applier); err != nil {
+			return errors.Join(fmt.Errorf("sql/schema: %w", err), tx.Rollback())
+		}
+		return tx.Commit()
+	}
+}
+
+// applyWithHooks wraps the given applier with the configured apply hooks and executes it.
+func (a *Atlas) applyWithHooks(
+	ctx context.Context,
+	conn dialect.ExecQuerier,
+	plan *migrate.Plan,
+	base Applier,
+) error {
+	applier := base
 	for i := len(a.applyHook) - 1; i >= 0; i-- {
 		applier = a.applyHook[i](applier)
 	}
-	if err = applier.Apply(ctx, tx, plan); err != nil {
-		return errors.Join(fmt.Errorf("sql/schema: %w", err), tx.Rollback())
+	return applier.Apply(ctx, conn, plan)
+}
+
+// wrapChangeError wraps an error with the change comment if present.
+func wrapChangeError(c *migrate.Change, err error) error {
+	if c.Comment != "" {
+		return fmt.Errorf("%s: %w", c.Comment, err)
 	}
-	return tx.Commit()
+	return err
 }
 
 // For BC reason, we omit the schema qualifier from the migration plan.
@@ -1065,6 +1103,11 @@ func (a *Atlas) aIndexes(et *Table, at *schema.Table) error {
 		if err := a.sqlDialect.atIndex(idx1, at, idx2); err != nil {
 			return err
 		}
+
+		if len(idx2.Parts) == 0 {
+			continue
+		}
+
 		desc := descIndexes(idx1)
 		for _, p := range idx2.Parts {
 			p.Desc = desc[p.C.Name]
@@ -1128,6 +1171,8 @@ func (a *Atlas) entDialect(ctx context.Context, drv dialect.Driver) (sqlDialect,
 		d = &SQLite{Driver: drv, WithForeignKeys: a.withForeignKeys}
 	case dialect.Postgres:
 		d = &Postgres{Driver: drv}
+	case dialect.YDB:
+		d = &YDB{Driver: drv}
 	default:
 		return nil, fmt.Errorf("sql/schema: unsupported dialect %q", a.dialect)
 	}

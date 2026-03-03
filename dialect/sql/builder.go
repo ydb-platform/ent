@@ -16,10 +16,13 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
 	"entgo.io/ent/dialect"
+
+	"github.com/google/uuid"
 )
 
 // Querier wraps the basic Query method that is implemented
@@ -131,6 +134,12 @@ func (v *ViewBuilder) Query() (string, []any) {
 	if len(v.columns) > 0 {
 		v.Pad().Wrap(func(b *Builder) { b.JoinComma(v.columns...) })
 	}
+
+	// YDB-specific: WITH (security_invoker = TRUE) is mandatory
+	if v.ydb() {
+		v.WriteString(" WITH (security_invoker = TRUE)")
+	}
+
 	v.WriteString(" AS ")
 	v.Join(v.as)
 	return v.String(), v.args
@@ -146,6 +155,9 @@ type InsertBuilder struct {
 	returning []string
 	values    [][]any
 	conflict  *conflict
+
+	// YDB-specific:
+	isUpsert bool // use UPSERT instead of INSERT
 }
 
 // Insert creates a builder for the `INSERT INTO` statement.
@@ -157,6 +169,21 @@ type InsertBuilder struct {
 //
 // Note: Insert inserts all values in one batch.
 func Insert(table string) *InsertBuilder { return &InsertBuilder{table: table} }
+
+// Upsert creates a builder for the `UPSERT INTO` statement.
+// UPSERT updates or inserts rows based on primary key comparison.
+// For existing rows, specified columns are updated while other columns are preserved.
+// For missing rows, new rows are inserted.
+//
+//	Upsert("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10).
+//		Values(2, "foo", 20)
+//
+// Note: UPSERT is only supported in YDB dialect.
+func Upsert(table string) *InsertBuilder {
+	return &InsertBuilder{table: table, isUpsert: true}
+}
 
 // Schema sets the database name for the insert table.
 func (i *InsertBuilder) Schema(name string) *InsertBuilder {
@@ -189,7 +216,11 @@ func (i *InsertBuilder) Values(values ...any) *InsertBuilder {
 
 // Default sets the default values clause based on the dialect type.
 func (i *InsertBuilder) Default() *InsertBuilder {
-	i.defaults = true
+	if i.ydb() {
+		i.AddError(fmt.Errorf("DEFAULT is not supported by %q", i.dialect))
+	} else {
+		i.defaults = true
+	}
 	return i
 }
 
@@ -364,6 +395,10 @@ func ResolveWith(fn func(*UpdateSet)) ConflictOption {
 //			sql.ResolveWithNewValues()
 //		)
 func (i *InsertBuilder) OnConflict(opts ...ConflictOption) *InsertBuilder {
+	if i.ydb() {
+		i.AddError(fmt.Errorf("ON CONFLICT is not supported by %q", i.dialect))
+		return i
+	}
 	if i.conflict == nil {
 		i.conflict = &conflict{}
 	}
@@ -438,11 +473,21 @@ func (i *InsertBuilder) Query() (string, []any) {
 	return query, args
 }
 
-// QueryErr returns query representation of an `INSERT INTO`
-// statement and any error occurred in building the statement.
+// QueryErr returns query representation of an `INSERT INTO`, `UPSERT INTO`,
+// or `REPLACE INTO` statement and any error occurred in building the statement.
 func (i *InsertBuilder) QueryErr() (string, []any, error) {
 	b := i.Builder.clone()
-	b.WriteString("INSERT INTO ")
+
+	if i.isUpsert {
+		if !b.ydb() {
+			b.AddError(fmt.Errorf("UPSERT INTO is not supported by %q", b.dialect))
+			return "", nil, b.Err()
+		}
+		b.WriteString("UPSERT INTO ")
+	} else {
+		b.WriteString("INSERT INTO ")
+	}
+
 	b.writeSchema(i.schema)
 	b.Ident(i.table).Pad()
 	if i.defaults && len(i.columns) == 0 {
@@ -604,8 +649,8 @@ func (u *UpdateBuilder) Empty() bool {
 // OrderBy appends the `ORDER BY` clause to the `UPDATE` statement.
 // Supported by SQLite and MySQL.
 func (u *UpdateBuilder) OrderBy(columns ...string) *UpdateBuilder {
-	if u.postgres() {
-		u.AddError(errors.New("ORDER BY is not supported by PostgreSQL"))
+	if u.postgres() || u.ydb() {
+		u.AddError(fmt.Errorf("ORDER BY is not supported by %q", u.dialect))
 		return u
 	}
 	for i := range columns {
@@ -617,8 +662,8 @@ func (u *UpdateBuilder) OrderBy(columns ...string) *UpdateBuilder {
 // Limit appends the `LIMIT` clause to the `UPDATE` statement.
 // Supported by SQLite and MySQL.
 func (u *UpdateBuilder) Limit(limit int) *UpdateBuilder {
-	if u.postgres() {
-		u.AddError(errors.New("LIMIT is not supported by PostgreSQL"))
+	if u.postgres() || u.ydb() {
+		u.AddError(fmt.Errorf("LIMIT is not supported by %q", u.dialect))
 		return u
 	}
 	u.limit = &limit
@@ -640,14 +685,23 @@ func (u *UpdateBuilder) Returning(columns ...string) *UpdateBuilder {
 
 // Query returns query representation of an `UPDATE` statement.
 func (u *UpdateBuilder) Query() (string, []any) {
+	query, args, _ := u.QueryErr()
+	return query, args
+}
+
+func (u *UpdateBuilder) QueryErr() (string, []any, error) {
 	b := u.Builder.clone()
 	if len(u.prefix) > 0 {
 		b.join(u.prefix, " ")
 		b.Pad()
 	}
+
 	b.WriteString("UPDATE ")
 	b.writeSchema(u.schema)
-	b.Ident(u.table).WriteString(" SET ")
+	b.Ident(u.table)
+
+	// Standard UPDATE SET pattern
+	b.WriteString(" SET ")
 	u.writeSetter(&b)
 	if u.where != nil {
 		b.WriteString(" WHERE ")
@@ -659,7 +713,7 @@ func (u *UpdateBuilder) Query() (string, []any) {
 		b.WriteString(" LIMIT ")
 		b.WriteString(strconv.Itoa(*u.limit))
 	}
-	return b.String(), b.args
+	return b.String(), b.args, nil
 }
 
 // writeSetter writes the "SET" clause for the UPDATE statement.
@@ -690,9 +744,10 @@ func (u *UpdateBuilder) writeSetter(b *Builder) {
 // DeleteBuilder is a builder for `DELETE` statement.
 type DeleteBuilder struct {
 	Builder
-	table  string
-	schema string
-	where  *Predicate
+	table     string
+	schema    string
+	where     *Predicate
+	returning []string // YDB-specific
 }
 
 // Delete creates a builder for the `DELETE` statement.
@@ -735,16 +790,37 @@ func (d *DeleteBuilder) FromSelect(s *Selector) *DeleteBuilder {
 	return d
 }
 
+// Returning adds the `RETURNING` clause to the delete statement.
+// Supported by YDB.
+func (d *DeleteBuilder) Returning(columns ...string) *DeleteBuilder {
+	if d.ydb() {
+		d.returning = columns
+	} else {
+		d.AddError(fmt.Errorf("DELETE RETURNING is not supported by %q", d.dialect))
+	}
+	return d
+}
+
 // Query returns query representation of a `DELETE` statement.
 func (d *DeleteBuilder) Query() (string, []any) {
-	d.WriteString("DELETE FROM ")
-	d.writeSchema(d.schema)
-	d.Ident(d.table)
+	query, args, _ := d.QueryErr()
+	return query, args
+}
+
+func (d *DeleteBuilder) QueryErr() (string, []any, error) {
+	b := d.Builder.clone()
+
+	b.WriteString("DELETE FROM ")
+	b.writeSchema(d.schema)
+	b.Ident(d.table)
+
 	if d.where != nil {
-		d.WriteString(" WHERE ")
-		d.Join(d.where)
+		b.WriteString(" WHERE ")
+		b.Join(d.where)
 	}
-	return d.String(), d.args
+
+	joinReturning(d.returning, &b)
+	return b.String(), b.args, nil
 }
 
 // Predicate is a where predicate.
@@ -1123,6 +1199,8 @@ func (p *Predicate) NotIn(col string, args ...any) *Predicate {
 }
 
 // Exists returns the `Exists` predicate.
+//
+// Note: Correlated subqueries with EXISTS are not supported by YDB
 func Exists(query Querier) *Predicate {
 	return P().Exists(query)
 }
@@ -1138,6 +1216,8 @@ func (p *Predicate) Exists(query Querier) *Predicate {
 }
 
 // NotExists returns the `NotExists` predicate.
+//
+// Note: Correlated subqueries with NOT EXISTS are not supported by YDB
 func NotExists(query Querier) *Predicate {
 	return P().NotExists(query)
 }
@@ -1165,38 +1245,64 @@ func (p *Predicate) Like(col, pattern string) *Predicate {
 	})
 }
 
-// escape escapes w with the default escape character ('/'),
+// escape escapes word with the default escape character ('\'),
 // to be used by the pattern matching functions below.
 // The second return value indicates if w was escaped or not.
-func escape(w string) (string, bool) {
+func escape(word string) (string, bool) {
+	return escapeWith(word, '\\')
+}
+
+// escapeYDB escapes w with '#' for YDB, since YDB doesn't support '\' in ESCAPE clause.
+func escapeYDB(word string) (string, bool) {
+	return escapeWith(word, '#')
+}
+
+func escapeWith(word string, escChar byte) (string, bool) {
 	var n int
-	for i := range w {
-		if c := w[i]; c == '%' || c == '_' || c == '\\' {
+	for i := 0; i < len(word); i++ {
+		if ch := word[i]; ch == '%' || ch == '_' || ch == escChar {
 			n++
 		}
 	}
 	// No characters to escape.
 	if n == 0 {
-		return w, false
+		return word, false
 	}
-	var b strings.Builder
-	b.Grow(len(w) + n)
-	for _, c := range w {
-		if c == '%' || c == '_' || c == '\\' {
-			b.WriteByte('\\')
+
+	var builder strings.Builder
+	builder.Grow(len(word) + n)
+
+	for i := 0; i < len(word); i++ {
+		if ch := word[i]; ch == '%' || ch == '_' || ch == escChar {
+			builder.WriteByte(escChar)
 		}
-		b.WriteRune(c)
+		builder.WriteByte(word[i])
 	}
-	return b.String(), true
+	return builder.String(), true
 }
 
 func (p *Predicate) escapedLike(col, left, right, word string) *Predicate {
-	return p.Append(func(b *Builder) {
-		w, escaped := escape(word)
-		b.Ident(col).WriteOp(OpLike)
-		b.Arg(left + w + right)
-		if p.dialect == dialect.SQLite && escaped {
-			p.WriteString(" ESCAPE ").Arg("\\")
+	return p.Append(func(builder *Builder) {
+		var escapedWord string
+		var escaped bool
+
+		if p.dialect == dialect.YDB {
+			escapedWord, escaped = escapeYDB(word)
+		} else {
+			escapedWord, escaped = escape(word)
+		}
+
+		builder.Ident(col).WriteOp(OpLike)
+		builder.Arg(left + escapedWord + right)
+
+		// SQLite and YDB require explicit ESCAPE clause.
+		if escaped {
+			switch p.dialect {
+			case dialect.SQLite:
+				p.WriteString(" ESCAPE ").Arg("\\")
+			case dialect.YDB:
+				p.WriteString(" ESCAPE '#'")
+			}
 		}
 	})
 }
@@ -1204,17 +1310,26 @@ func (p *Predicate) escapedLike(col, left, right, word string) *Predicate {
 // ContainsFold is a helper predicate that applies the LIKE predicate with case-folding.
 func (p *Predicate) escapedLikeFold(col, left, substr, right string) *Predicate {
 	return p.Append(func(b *Builder) {
-		w, escaped := escape(substr)
 		switch b.dialect {
 		case dialect.MySQL:
+			w, _ := escape(substr)
 			// We assume the CHARACTER SET is configured to utf8mb4,
 			// because this how it is defined in dialect/sql/schema.
 			b.Ident(col).WriteString(" COLLATE utf8mb4_general_ci LIKE ")
 			b.Arg(left + strings.ToLower(w) + right)
 		case dialect.Postgres:
+			w, _ := escape(substr)
 			b.Ident(col).WriteString(" ILIKE ")
 			b.Arg(left + strings.ToLower(w) + right)
+		case dialect.YDB:
+			w, escaped := escapeYDB(substr)
+			b.Ident(col).WriteString(" ILIKE ")
+			b.Arg(left + strings.ToLower(w) + right)
+			if escaped {
+				p.WriteString(" ESCAPE '#'")
+			}
 		default: // SQLite.
+			w, escaped := escape(substr)
 			var f Func
 			f.SetDialect(b.dialect)
 			f.Lower(col)
@@ -1267,8 +1382,14 @@ func (p *Predicate) ColumnsHasPrefix(col, prefixC string) *Predicate {
 			if p.dialect == dialect.SQLite {
 				p.WriteString(" ESCAPE ").Arg("\\")
 			}
+		case dialect.YDB:
+			b.S("StartsWith(").
+				Ident(col).
+				S(", ").
+				Ident(prefixC).
+				S(")")
 		default:
-			b.AddError(fmt.Errorf("ColumnsHasPrefix: unsupported dialect: %q", p.dialect))
+			b.AddError(fmt.Errorf("ColumnsHasPrefix is not supported by %q", p.dialect))
 		}
 	})
 }
@@ -1448,7 +1569,54 @@ func Lower(ident string) string {
 
 // Lower wraps the given ident with the LOWER function.
 func (f *Func) Lower(ident string) {
-	f.byName("LOWER", ident)
+	f.Append(func(b *Builder) {
+		if f.dialect == dialect.YDB {
+			f.WriteString("Unicode::ToLower(")
+			b.Ident(ident)
+			f.WriteString(")")
+		} else {
+			f.WriteString("LOWER")
+			f.Wrap(func(b *Builder) {
+				b.Ident(ident)
+			})
+		}
+	})
+}
+
+// Upper wraps the given column with the UPPER function.
+//
+//	P().EQ(sql.Upper("name"), "A8M")
+func Upper(ident string) string {
+	f := &Func{}
+	f.Upper(ident)
+	return f.String()
+}
+
+// Upper wraps the given ident with the UPPER function.
+func (f *Func) Upper(ident string) {
+	f.Append(func(b *Builder) {
+		if f.dialect == dialect.YDB {
+			f.WriteString("Unicode::ToUpper(")
+			b.Ident(ident)
+			f.WriteString(")")
+		} else {
+			f.WriteString("UPPER")
+			f.Wrap(func(b *Builder) {
+				b.Ident(ident)
+			})
+		}
+	})
+}
+
+// UpperExpr returns a dialect-aware UPPER expression.
+func UpperExpr(ident string) Querier {
+	return ExprFunc(func(b *Builder) {
+		if b.Dialect() == dialect.YDB {
+			b.WriteString("Unicode::ToUpper(").Ident(ident).WriteString(")")
+		} else {
+			b.WriteString("UPPER(").Ident(ident).WriteString(")")
+		}
+	})
 }
 
 // Count wraps the ident with the COUNT aggregation function.
@@ -1583,6 +1751,9 @@ type SelectTable struct {
 	name   string
 	schema string
 	quote  bool
+
+	// YDB-specific:
+	isCte bool // YDB-specific: marks this as a CTE reference
 }
 
 // Table returns a new table selector.
@@ -1643,7 +1814,25 @@ func (s *SelectTable) ref() string {
 	}
 	b := &Builder{dialect: s.dialect}
 	b.writeSchema(s.schema)
+
+	// YDB-specific: CTE references require $ prefix
+	// and should have alias for easy handling
+	if s.isCte && b.ydb() {
+		b.WriteString("$")
+		b.Ident(s.name)
+
+		b.WriteString(" AS ")
+		if s.as != "" {
+			b.Ident(s.as)
+		} else {
+			b.Ident(s.name)
+		}
+
+		return b.String()
+	}
+
 	b.Ident(s.name)
+
 	if s.as != "" {
 		b.WriteString(" AS ")
 		b.Ident(s.as)
@@ -1677,7 +1866,7 @@ type Selector struct {
 	// generated code such as alternate table schemas.
 	ctx       context.Context
 	as        string
-	selection []selection
+	selection []*selection
 	from      []TableView
 	joins     []join
 	collected [][]*Predicate
@@ -1742,17 +1931,17 @@ func SelectExpr(exprs ...Querier) *Selector {
 
 // selection represents a column or an expression selection.
 type selection struct {
-	x  Querier
-	c  string
-	as string
+	expr   Querier
+	column string
+	alias  string
 }
 
 // Select changes the columns selection of the SELECT statement.
 // Empty selection means all columns *.
 func (s *Selector) Select(columns ...string) *Selector {
-	s.selection = make([]selection, len(columns))
+	s.selection = make([]*selection, len(columns))
 	for i := range columns {
-		s.selection[i] = selection{c: columns[i]}
+		s.selection[i] = &selection{column: columns[i]}
 	}
 	return s
 }
@@ -1765,23 +1954,23 @@ func (s *Selector) SelectDistinct(columns ...string) *Selector {
 // AppendSelect appends additional columns to the SELECT statement.
 func (s *Selector) AppendSelect(columns ...string) *Selector {
 	for i := range columns {
-		s.selection = append(s.selection, selection{c: columns[i]})
+		s.selection = append(s.selection, &selection{column: columns[i]})
 	}
 	return s
 }
 
 // AppendSelectAs appends additional column to the SELECT statement with the given alias.
 func (s *Selector) AppendSelectAs(column, as string) *Selector {
-	s.selection = append(s.selection, selection{c: column, as: as})
+	s.selection = append(s.selection, &selection{column: column, alias: as})
 	return s
 }
 
 // SelectExpr changes the columns selection of the SELECT statement
 // with custom list of expressions.
 func (s *Selector) SelectExpr(exprs ...Querier) *Selector {
-	s.selection = make([]selection, len(exprs))
+	s.selection = make([]*selection, len(exprs))
 	for i := range exprs {
-		s.selection[i] = selection{x: exprs[i]}
+		s.selection[i] = &selection{expr: exprs[i]}
 	}
 	return s
 }
@@ -1789,7 +1978,7 @@ func (s *Selector) SelectExpr(exprs ...Querier) *Selector {
 // AppendSelectExpr appends additional expressions to the SELECT statement.
 func (s *Selector) AppendSelectExpr(exprs ...Querier) *Selector {
 	for i := range exprs {
-		s.selection = append(s.selection, selection{x: exprs[i]})
+		s.selection = append(s.selection, &selection{expr: exprs[i]})
 	}
 	return s
 }
@@ -1802,9 +1991,9 @@ func (s *Selector) AppendSelectExprAs(expr Querier, as string) *Selector {
 			b.S("(").Join(expr).S(")")
 		})
 	}
-	s.selection = append(s.selection, selection{
-		x:  x,
-		as: as,
+	s.selection = append(s.selection, &selection{
+		expr:  x,
+		alias: as,
 	})
 	return s
 }
@@ -1832,16 +2021,16 @@ func (s *Selector) FindSelection(name string) (matches []string) {
 	for _, c := range s.selection {
 		switch {
 		// Match aliases.
-		case c.as != "":
-			if ident := s.isIdent(c.as); !ident && c.as == name || ident && s.unquote(c.as) == name {
-				matches = append(matches, c.as)
+		case c.alias != "":
+			if ident := s.isIdent(c.alias); !ident && c.alias == name || ident && s.unquote(c.alias) == name {
+				matches = append(matches, c.alias)
 			}
 		// Match qualified columns.
-		case c.c != "" && s.isQualified(c.c) && matchC(c.c):
-			matches = append(matches, c.c)
+		case c.column != "" && s.isQualified(c.column) && matchC(c.column):
+			matches = append(matches, c.column)
 		// Match unqualified columns.
-		case c.c != "" && (c.c == name || s.isIdent(c.c) && s.unquote(c.c) == name):
-			matches = append(matches, c.c)
+		case c.column != "" && (c.column == name || s.isIdent(c.column) && s.unquote(c.column) == name):
+			matches = append(matches, c.column)
 		}
 	}
 	return matches
@@ -1851,7 +2040,7 @@ func (s *Selector) FindSelection(name string) (matches []string) {
 func (s *Selector) SelectedColumns() []string {
 	columns := make([]string, 0, len(s.selection))
 	for i := range s.selection {
-		if c := s.selection[i].c; c != "" {
+		if c := s.selection[i].column; c != "" {
 			columns = append(columns, c)
 		}
 	}
@@ -1863,7 +2052,7 @@ func (s *Selector) SelectedColumns() []string {
 func (s *Selector) UnqualifiedColumns() []string {
 	columns := make([]string, 0, len(s.selection))
 	for i := range s.selection {
-		c := s.selection[i].c
+		c := s.selection[i].column
 		if c == "" {
 			continue
 		}
@@ -1888,9 +2077,13 @@ func (s *Selector) From(t TableView) *Selector {
 
 // AppendFrom appends a new TableView to the `FROM` clause.
 func (s *Selector) AppendFrom(t TableView) *Selector {
-	s.from = append(s.from, t)
-	if st, ok := t.(state); ok {
-		st.SetDialect(s.dialect)
+	if s.ydb() && len(s.from) != 0 {
+		s.AddError(fmt.Errorf("multiple tables after FROM clause is not supported by %q", s.dialect))
+	} else {
+		s.from = append(s.from, t)
+		if st, ok := t.(state); ok {
+			st.SetDialect(s.dialect)
+		}
 	}
 	return s
 }
@@ -2107,6 +2300,11 @@ func (s *Selector) FullJoin(t TableView) *Selector {
 	return s.join("FULL JOIN", t)
 }
 
+// CrossJoin appends a `CROSS JOIN` clause to the statement.
+func (s *Selector) CrossJoin(t TableView) *Selector {
+	return s.join("CROSS JOIN", t)
+}
+
 // join adds a join table to the selector with the given kind.
 func (s *Selector) join(kind string, t TableView) *Selector {
 	s.joins = append(s.joins, join{
@@ -2178,17 +2376,22 @@ func (s *Selector) UnionDistinct(t TableView) *Selector {
 
 // Except appends the EXCEPT clause to the query.
 func (s *Selector) Except(t TableView) *Selector {
-	s.setOps = append(s.setOps, setOp{
-		Type:      setOpTypeExcept,
-		TableView: t,
-	})
+	if s.ydb() {
+		s.AddError(fmt.Errorf("EXCEPT is not supported by %q", s.dialect))
+		return s
+	} else {
+		s.setOps = append(s.setOps, setOp{
+			Type:      setOpTypeExcept,
+			TableView: t,
+		})
+	}
 	return s
 }
 
 // ExceptAll appends the EXCEPT ALL clause to the query.
 func (s *Selector) ExceptAll(t TableView) *Selector {
-	if s.sqlite() {
-		s.AddError(errors.New("EXCEPT ALL is not supported by SQLite"))
+	if s.sqlite() || s.ydb() {
+		s.AddError(fmt.Errorf("EXCEPT ALL is not supported by %q", s.dialect))
 	} else {
 		s.setOps = append(s.setOps, setOp{
 			Type:      setOpTypeExcept,
@@ -2201,17 +2404,21 @@ func (s *Selector) ExceptAll(t TableView) *Selector {
 
 // Intersect appends the INTERSECT clause to the query.
 func (s *Selector) Intersect(t TableView) *Selector {
-	s.setOps = append(s.setOps, setOp{
-		Type:      setOpTypeIntersect,
-		TableView: t,
-	})
+	if s.ydb() {
+		s.AddError(fmt.Errorf("INTERSECT is not supported by %q", s.dialect))
+	} else {
+		s.setOps = append(s.setOps, setOp{
+			Type:      setOpTypeIntersect,
+			TableView: t,
+		})
+	}
 	return s
 }
 
 // IntersectAll appends the INTERSECT ALL clause to the query.
 func (s *Selector) IntersectAll(t TableView) *Selector {
-	if s.sqlite() {
-		s.AddError(errors.New("INTERSECT ALL is not supported by SQLite"))
+	if s.sqlite() || s.ydb() {
+		s.AddError(fmt.Errorf("INTERSECT ALL is not supported by %q", s.dialect))
 	} else {
 		s.setOps = append(s.setOps, setOp{
 			Type:      setOpTypeIntersect,
@@ -2363,8 +2570,8 @@ func WithLockClause(clause string) LockOption {
 // For sets the lock configuration for suffixing the `SELECT`
 // statement with the `FOR [SHARE | UPDATE] ...` clause.
 func (s *Selector) For(l LockStrength, opts ...LockOption) *Selector {
-	if s.Dialect() == dialect.SQLite {
-		s.AddError(errors.New("sql: SELECT .. FOR UPDATE/SHARE not supported in SQLite"))
+	if s.sqlite() || s.ydb() {
+		s.AddError(fmt.Errorf("SELECT .. FOR UPDATE/SHARE is not supported by %q", s.dialect))
 	}
 	s.lock = &LockOptions{Strength: l}
 	for _, opt := range opts {
@@ -2410,7 +2617,7 @@ func (s *Selector) Clone() *Selector {
 		joins:     append([]join{}, joins...),
 		group:     append([]string{}, s.group...),
 		order:     append([]any{}, s.order...),
-		selection: append([]selection{}, s.selection...),
+		selection: append([]*selection{}, s.selection...),
 	}
 }
 
@@ -2494,6 +2701,10 @@ func (s *Selector) Having(p *Predicate) *Selector {
 // Query returns query representation of a `SELECT` statement.
 func (s *Selector) Query() (string, []any) {
 	b := s.Builder.clone()
+	// For YDB, mark tables that reference CTEs
+	if b.ydb() {
+		s.markCteReferences()
+	}
 	s.joinPrefix(&b)
 	b.WriteString("SELECT ")
 	if s.distinct {
@@ -2568,6 +2779,9 @@ func (s *Selector) Query() (string, []any) {
 	if len(s.setOps) > 0 {
 		s.joinSetOps(&b)
 	}
+	if b.ydb() {
+		s.applyAliasesToOrder()
+	}
 	joinOrder(s.order, &b)
 	if s.limit != nil {
 		b.WriteString(" LIMIT ")
@@ -2588,6 +2802,45 @@ func (s *Selector) joinPrefix(b *Builder) {
 		b.join(s.prefix, " ")
 		b.Pad()
 	}
+}
+
+// markCteReferences marks SelectTable entries in from/joins as CTE references
+// if they match CTE names from the prefix. Used for YDB which requires $ prefix
+// when referencing named expressions (CTEs).
+func (s *Selector) markCteReferences() {
+	cteNames := s.collectCteNames()
+	if len(cteNames) == 0 {
+		return
+	}
+	// Mark FROM tables
+	for _, from := range s.from {
+		if table, ok := from.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
+			}
+		}
+	}
+	// Mark JOIN tables
+	for _, join := range s.joins {
+		if table, ok := join.table.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
+			}
+		}
+	}
+}
+
+// collectCteNames returns a set of CTE names from the selector's prefix.
+func (s *Selector) collectCteNames() map[string]any {
+	names := make(map[string]any)
+	for _, prefix := range s.prefix {
+		if with, ok := prefix.(*WithBuilder); ok {
+			for _, cte := range with.ctes {
+				names[cte.name] = struct{}{}
+			}
+		}
+	}
+	return names
 }
 
 func (s *Selector) joinLock(b *Builder) {
@@ -2648,7 +2901,8 @@ func joinOrder(order []any, b *Builder) {
 }
 
 func joinReturning(columns []string, b *Builder) {
-	if len(columns) == 0 || (!b.postgres() && !b.sqlite()) {
+	supportedByDialect := b.postgres() || b.sqlite() || b.ydb()
+	if len(columns) == 0 || !supportedByDialect {
 		return
 	}
 	b.WriteString(" RETURNING ")
@@ -2656,21 +2910,145 @@ func joinReturning(columns []string, b *Builder) {
 }
 
 func (s *Selector) joinSelect(b *Builder) {
-	for i, sc := range s.selection {
+	for i, selection := range s.selection {
 		if i > 0 {
 			b.Comma()
 		}
-		switch {
-		case sc.c != "":
-			b.Ident(sc.c)
-		case sc.x != nil:
-			b.Join(sc.x)
+
+		// YDB returns column names with table prefix (e.g., "users.name" instead of "name"),
+		// so we add aliases to ensure the scanner can match columns correctly.
+		if selection.alias == "" && b.ydb() {
+			// If the column already has an alias, extract it
+			upperColumnName := strings.ToUpper(selection.column)
+
+			if idx := strings.LastIndex(upperColumnName, " AS "); idx != -1 {
+				originalColumn := selection.column
+
+				selection.column = strings.TrimSpace(originalColumn[:idx])
+				selection.alias = strings.Trim(originalColumn[idx+4:], " `\"")
+			} else if selection.column != "" && !strings.ContainsAny(selection.column, "()") {
+				// Qualified column name like "users.name" -> alias "name"
+				if idx := strings.LastIndexByte(selection.column, '.'); idx != -1 {
+					selection.alias = selection.column[idx+1:]
+				}
+			} else if selection.column != "" {
+				// Expression passed as column string like "COUNT(*)" or "SUM(users.age)"
+				selection.alias = exprAlias(selection.column)
+			}
 		}
-		if sc.as != "" {
+
+		switch {
+		case selection.column != "":
+			// YDB requires qualified asterisk (table.*)
+			// when mixing * with other projection items.
+			if b.ydb() && selection.column == "*" && len(s.selection) > 1 {
+				if tableName := s.firstTableName(); tableName != "" {
+					b.Ident(tableName).WriteByte('.').WriteString("*")
+				} else {
+					b.Ident(selection.column)
+				}
+			} else {
+				b.Ident(selection.column)
+			}
+		case selection.expr != nil:
+			b.Join(selection.expr)
+		}
+
+		if selection.alias != "" {
 			b.WriteString(" AS ")
-			b.Ident(sc.as)
+			b.Ident(selection.alias)
 		}
 	}
+}
+
+// firstTableName returns the name or alias of the first table in the FROM clause.
+func (s *Selector) firstTableName() string {
+	if len(s.from) == 0 {
+		return ""
+	}
+	switch t := s.from[0].(type) {
+	case *SelectTable:
+		if t.as != "" {
+			return t.as
+		}
+		return t.name
+	case *WithBuilder:
+		return t.Name()
+	case *Selector:
+		return t.as
+	}
+	return ""
+}
+
+// applyAliasesToOrder processes ORDER BY columns for YDB compatibility.
+// - When there's a GROUP BY, use aliases
+// - When there are subquery joins, use aliases
+// - When there are simple table joins, keep qualified columns to avoid ambiguity
+// - Otherwise, replace qualified columns with their aliases
+func (s *Selector) applyAliasesToOrder() {
+	aliasMap := make(map[string]string)
+	for _, selection := range s.selection {
+		if selection.column == "" {
+			continue
+		}
+		if selection.alias != "" {
+			aliasMap[selection.column] = selection.alias
+		}
+	}
+
+	if len(aliasMap) == 0 {
+		return
+	}
+
+	hasGroupBy := len(s.group) > 0
+	hasSubqueryJoin := s.hasSubqueryJoin()
+	hasSimpleTableJoin := len(s.joins) > 0 && !hasSubqueryJoin
+
+	// Process ORDER BY columns
+	result := make([]any, len(s.order))
+	for i, order := range s.order {
+		str, ok := order.(string)
+		if !ok {
+			result[i] = order
+			continue
+		}
+		// Handle "column DESC" or "column ASC" suffixes.
+		column, suffix := str, ""
+		if idx := strings.LastIndex(str, " "); idx != -1 {
+			upper := strings.ToUpper(str[idx+1:])
+			if upper == "ASC" || upper == "DESC" {
+				column = str[:idx]
+				suffix = str[idx:]
+			}
+		}
+
+		if alias, ok := aliasMap[column]; (hasGroupBy || hasSubqueryJoin || !hasSimpleTableJoin) && ok {
+			result[i] = alias + suffix
+		} else {
+			result[i] = order
+		}
+	}
+	s.order = result
+}
+
+// hasSubqueryJoin returns true if any join involves a subquery (Selector).
+func (s *Selector) hasSubqueryJoin() bool {
+	for _, join := range s.joins {
+		if _, ok := join.table.(*Selector); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// exprAlias extracts an alias from an aggregate expression for YDB.
+// E.g., "COUNT(*)" -> "count", "SUM(users.age)" -> "sum"
+func exprAlias(expr string) string {
+	expr = strings.ToLower(expr)
+	if idx := strings.IndexByte(expr, '('); idx != -1 {
+		return expr[:idx]
+	}
+	return ""
 }
 
 // implement the table view interface.
@@ -2745,6 +3123,10 @@ func (w *WithBuilder) C(column string) string {
 
 // Query returns query representation of a `WITH` clause.
 func (w *WithBuilder) Query() (string, []any) {
+	if w.ydb() {
+		return w.queryYDB()
+	}
+
 	w.WriteString("WITH ")
 	if w.recursive {
 		w.WriteString("RECURSIVE ")
@@ -2765,6 +3147,55 @@ func (w *WithBuilder) Query() (string, []any) {
 		})
 	}
 	return w.String(), w.args
+}
+
+// YDB uses named expressions ($name = SELECT ...) instead of CTEs
+func (w *WithBuilder) queryYDB() (string, []any) {
+	// Collect all CTE names for marking references
+	cteNames := make(map[string]struct{})
+	for _, cte := range w.ctes {
+		cteNames[cte.name] = struct{}{}
+	}
+
+	for i, cte := range w.ctes {
+		if i > 0 {
+			w.WriteString(" ")
+		}
+
+		// Mark CTE references in the selector's FROM and JOIN tables
+		if cte.s != nil {
+			w.markCteReferencesInSelector(cte.s, cteNames)
+		}
+
+		w.WriteString("$")
+		w.Ident(cte.name)
+		w.WriteString(" = ")
+
+		w.Wrap(func(b *Builder) {
+			b.Join(cte.s)
+		})
+
+		w.WriteString(";")
+	}
+	return w.String(), w.args
+}
+
+// markCteReferencesInSelector marks tables in a selector that reference CTEs.
+func (w *WithBuilder) markCteReferencesInSelector(s *Selector, cteNames map[string]struct{}) {
+	for _, from := range s.from {
+		if table, ok := from.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
+			}
+		}
+	}
+	for _, join := range s.joins {
+		if table, ok := join.table.(*SelectTable); ok {
+			if _, isCte := cteNames[table.name]; isCte {
+				table.isCte = true
+			}
+		}
+	}
 }
 
 // implement the table view interface.
@@ -3065,9 +3496,10 @@ func (b *Builder) AddError(err error) *Builder {
 }
 
 func (b *Builder) writeSchema(schema string) {
-	if schema != "" && b.dialect != dialect.SQLite {
-		b.Ident(schema).WriteByte('.')
+	if schema == "" || b.sqlite() || b.ydb() {
+		return
 	}
+	b.Ident(schema).WriteByte('.')
 }
 
 // Err returns a concatenated error of all errors encountered during
@@ -3177,6 +3609,9 @@ func (b *Builder) Arg(a any) *Builder {
 		// Postgres' arguments are referenced using the syntax $n.
 		// $1 refers to the 1st argument, $2 to the 2nd, and so on.
 		format = "$" + strconv.Itoa(b.total+1)
+	} else if b.ydb() {
+		// YDB uses named parameters with the syntax $paramName.
+		format = "$p" + strconv.Itoa(b.total)
 	}
 	if f, ok := a.(ParamFormatter); ok {
 		format = f.FormatParam(format, &StmtInfo{
@@ -3202,8 +3637,8 @@ func (b *Builder) Args(a ...any) *Builder {
 //
 //	FormatArg("JSON(?)", b).
 //	FormatArg("ST_GeomFromText(?)", geom)
-func (b *Builder) Argf(format string, a any) *Builder {
-	switch a := a.(type) {
+func (b *Builder) Argf(format string, arg any) *Builder {
+	switch a := arg.(type) {
 	case nil:
 		b.WriteString("NULL")
 		return b
@@ -3215,9 +3650,77 @@ func (b *Builder) Argf(format string, a any) *Builder {
 		return b
 	}
 	b.total++
-	b.args = append(b.args, a)
+
+	// YDB requires named parameters with $paramName syntax.
+	if b.ydb() {
+		paramName := strings.TrimPrefix(format, "$")
+		b.args = append(b.args, driver.NamedValue{
+			Name:  paramName,
+			Value: b.convertValueYdb(arg),
+		})
+	} else {
+		b.args = append(b.args, arg)
+	}
+
 	b.WriteString(format)
 	return b
+}
+
+// YDB has strong typing system
+// and YDB driver can't convert type aliases to underlying Go type
+// Therefore, we have to manually handle these edge cases
+func (b *Builder) convertValueYdb(arg any) any {
+	finalValue := arg
+
+	switch casted := arg.(type) {
+	case uuid.UUID:
+		finalValue = casted
+	case driver.Valuer:
+		if v, err := casted.Value(); err == nil {
+			finalValue = v
+		}
+	default:
+		// YDB requires exact numeric types.
+		// Convert named types to their base primitive type
+		// while preserving the exact numeric size.
+		typ := reflect.TypeOf(arg)
+		value := reflect.ValueOf(arg)
+
+		switch typ.Kind() {
+		case reflect.Int:
+			finalValue = int(value.Int())
+		case reflect.Int8:
+			finalValue = int8(value.Int()) // #nosec G115
+		case reflect.Int16:
+			finalValue = int16(value.Int()) // #nosec G115
+		case reflect.Int32:
+			finalValue = int32(value.Int()) // #nosec G115
+		case reflect.Int64:
+			finalValue = value.Int()
+		case reflect.Uint:
+			finalValue = uint(value.Uint())
+		case reflect.Uint8:
+			finalValue = uint8(value.Uint()) // #nosec G115
+		case reflect.Uint16:
+			finalValue = uint16(value.Uint()) // #nosec G115
+		case reflect.Uint32:
+			finalValue = uint32(value.Uint()) // #nosec G115
+		case reflect.Uint64:
+			finalValue = value.Uint()
+		case reflect.Float32:
+			finalValue = float32(value.Float())
+		case reflect.Float64:
+			finalValue = value.Float()
+		default:
+			// Convert other custom types (e.g., http.Dir -> string)
+			converted, err := driver.DefaultParameterConverter.ConvertValue(arg)
+			if err == nil {
+				finalValue = converted
+			}
+		}
+	}
+
+	return finalValue
 }
 
 // Comma adds a comma to the query.
@@ -3331,6 +3834,11 @@ func (b Builder) sqlite() bool {
 	return b.Dialect() == dialect.SQLite
 }
 
+// ydb reports if the builder dialect is YDB.
+func (b Builder) ydb() bool {
+	return b.Dialect() == dialect.YDB
+}
+
 // fromIdent sets the builder dialect from the identifier format.
 func (b *Builder) fromIdent(ident string) {
 	if strings.Contains(ident, `"`) {
@@ -3388,6 +3896,11 @@ func Dialect(name string) *DialectBuilder {
 	return &DialectBuilder{name}
 }
 
+// Dialect returns the dialect name of this builder.
+func (d *DialectBuilder) Dialect() string {
+	return d.dialect
+}
+
 // String builds a dialect-aware expression string from the given callback.
 func (d *DialectBuilder) String(f func(*Builder)) string {
 	b := &Builder{}
@@ -3433,6 +3946,19 @@ func (d *DialectBuilder) Column(name string) *ColumnBuilder {
 //		Insert("users").Columns("age").Values(1)
 func (d *DialectBuilder) Insert(table string) *InsertBuilder {
 	b := Insert(table)
+	b.SetDialect(d.dialect)
+	return b
+}
+
+// Upsert creates an InsertBuilder for the UPSERT statement with the configured dialect.
+// UPSERT is only supported in YDB dialect.
+//
+//	Dialect(dialect.YDB).
+//		Upsert("users").
+//		Columns("id", "name", "age").
+//		Values(1, "a8m", 10)
+func (d *DialectBuilder) Upsert(table string) *InsertBuilder {
+	b := Upsert(table)
 	b.SetDialect(d.dialect)
 	return b
 }

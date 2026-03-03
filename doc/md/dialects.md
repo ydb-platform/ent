@@ -39,3 +39,9 @@ TiDB support is in preview and requires the [Atlas migration engine](migrate.md#
 TiDB is MySQL compatible and thus any feature that works on MySQL _should_ work on TiDB as well.  
 For a list of known compatibility issues, visit: https://docs.pingcap.com/tidb/stable/mysql-compatibility  
 The integration with TiDB is currently tested on versions `5.4.0`, `6.0.0`.
+
+## YDB **(<ins>preview</ins>)**
+
+YDB (Yandex Database) support is in preview and requires the [Atlas migration engine](migrate.md#atlas-integration).  
+YDB is a distributed SQL database that supports automatic retries for transient errors.  
+For detailed information about driver setup, retry handling, and YDB-specific features, see the [YDB documentation](ydb.md).
