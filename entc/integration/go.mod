@@ -1,8 +1,6 @@
 module entgo.io/ent/entc/integration
 
-go 1.24.9
-
-toolchain go1.24.11
+go 1.24.13
 
 replace entgo.io/ent => ../../
 
@@ -50,4 +48,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace ariga.io/atlas => github.com/LostImagin4tion/atlas v0.0.34
+replace ariga.io/atlas => github.com/ydb-platform/ariga-atlas v0.0.1
